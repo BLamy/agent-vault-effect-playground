@@ -53,6 +53,7 @@
               "guides/connect-coding-agent",
               "guides/connect-custom-agent",
               "guides/deploy-agent-container",
+              "guides/effect-sandbox-proxy",
               "guides/hermes-on-vps"
             ]
           },

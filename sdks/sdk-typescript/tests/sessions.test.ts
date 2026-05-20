@@ -43,7 +43,7 @@ describe("SessionsResource", () => {
       expect(body.vault).toBe("my-project");
     });
 
-    it("sends ttl_seconds when provided and never sends vault_role", async () => {
+    it("sends ttl_seconds and label when provided and never sends vault_role", async () => {
       const mockFetch = createRoutedMockFetch({
         "/v1/sessions": {
           body: {
@@ -64,13 +64,14 @@ describe("SessionsResource", () => {
         fetch: mockFetch,
       });
       const vault = av.vault("prod");
-      await vault.sessions!.create({ ttlSeconds: 7200 });
+      await vault.sessions!.create({ ttlSeconds: 7200, label: "sprite run" });
 
       const sessionCall = mockFetch.mock.calls.find(
         ([url]) => (url as string).includes("/v1/sessions"),
       )!;
       const body = JSON.parse(sessionCall[1]?.body as string);
       expect(body.ttl_seconds).toBe(7200);
+      expect(body.label).toBe("sprite run");
       expect(body).not.toHaveProperty("vault_role");
     });
 

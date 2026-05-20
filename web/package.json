@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@tanstack/react-router": "^1.169.2",
+    "effect": "^3.21.2",
     "react": "^19.2.5",
     "react-dom": "^19.2.6"
   },

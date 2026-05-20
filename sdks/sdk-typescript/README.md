@@ -48,6 +48,36 @@ const env = buildProxyEnv(session.containerConfig!, certPath);
 
 `containerConfig` is `null` when the server has MITM disabled (`--mitm-port 0`).
 
+### Optional Effect layer
+
+The SDK also exposes an Effect-only subpath so Effect applications can compose Agent Vault proxy setup with the rest of their runtime without loading Effect from the root SDK import.
+
+```typescript
+import { AgentVaultSandboxProxy } from "@infisical/agent-vault-sdk/effect";
+import { Effect } from "effect";
+
+const ProxyLayer = AgentVaultSandboxProxy.layer({
+  token: process.env.AGENT_VAULT_TOKEN!,
+  address: "http://localhost:14321",
+  vault: "my-project",
+  certPath: "/etc/ssl/agent-vault-ca.pem",
+  credentialKeys: ["STRIPE_KEY"],
+  serviceNames: ["stripe"],
+});
+
+const program = Effect.gen(function* () {
+  const proxy = yield* AgentVaultSandboxProxy;
+  const prepared = yield* proxy.prepareForSandbox;
+
+  const env = AgentVaultSandboxProxy.unsafeMaterializeEnv(prepared);
+  const caPem = AgentVaultSandboxProxy.unsafeMaterializeCaCertificate(prepared);
+
+  return { env, caPem, expiresAt: prepared.expiresAt };
+}).pipe(Effect.provide(ProxyLayer));
+```
+
+`prepared.env` and `prepared.caCertificate` are `Redacted` values; materialize them only at the boundary that writes the CA PEM and starts the sandbox process.
+
 ### Example: Docker
 
 ```typescript

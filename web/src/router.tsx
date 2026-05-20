@@ -5,6 +5,7 @@ import {
   redirect,
   Outlet,
 } from "@tanstack/react-router";
+import { lazy, Suspense } from "react";
 import { apiFetch } from "./lib/api";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -28,6 +29,9 @@ import InstanceLayout from "./components/InstanceLayout";
 import AccountLayout from "./components/AccountLayout";
 import AccountSettingsTab from "./pages/account/SettingsTab";
 import InstanceSettingsTab from "./pages/instance/SettingsTab";
+import { LoadingSpinner } from "./components/shared";
+
+const EffectPlaygroundTab = lazy(() => import("./pages/vault/EffectPlaygroundTab"));
 
 // --- Types ---
 
@@ -309,6 +313,12 @@ const credentialsTabRoute = createRoute({
   component: CredentialsTab,
 });
 
+const effectPlaygroundTabRoute = createRoute({
+  getParentRoute: () => vaultLayoutRoute,
+  path: "/playground",
+  component: EffectPlaygroundRoute,
+});
+
 const usersTabRoute = createRoute({
   getParentRoute: () => vaultLayoutRoute,
   path: "/users",
@@ -361,6 +371,7 @@ const routeTree = rootRoute.addChildren([
       logsTabRoute,
       servicesTabRoute,
       credentialsTabRoute,
+      effectPlaygroundTabRoute,
       usersTabRoute,
       agentsTabRoute,
       tokensTabRoute,
@@ -372,6 +383,14 @@ const routeTree = rootRoute.addChildren([
 // --- Router ---
 
 export const router = createRouter({ routeTree });
+
+function EffectPlaygroundRoute() {
+  return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <EffectPlaygroundTab />
+    </Suspense>
+  );
+}
 
 // Type registration for type-safe navigation
 declare module "@tanstack/react-router" {

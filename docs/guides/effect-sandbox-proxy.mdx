@@ -1,0 +1,81 @@
+---
+title: "Effect sandbox proxy"
+description: "Configure a sandboxed Sprite to route outbound API calls through Agent Vault from an Effect layer."
+---
+
+Agent Vault already gives an orchestrator the primitives needed for sandboxed agents:
+
+- `POST /v1/sessions` mints a short-lived vault-scoped proxy token.
+- `GET /v1/mitm/ca.pem` returns the CA certificate needed by HTTPS clients in the sandbox.
+- `buildProxyEnv(containerConfig, certPath)` expands proxy and CA trust variables for Node, curl, Git, Python, and Deno.
+
+The Effect integration keeps those materials in a layer so a Sprite launcher can compose them with the rest of its runtime.
+
+```ts
+import { AgentVaultSandboxProxy } from "@infisical/agent-vault-sdk/effect";
+import { Effect } from "effect";
+
+const ProxyLayer = AgentVaultSandboxProxy.layer({
+  address: process.env.AGENT_VAULT_ADDR!,
+  token: process.env.AGENT_VAULT_TOKEN!,
+  vault: "default",
+  certPath: "/etc/agent-vault/ca.pem",
+  credentialKeys: ["OPENAI_API_KEY"],
+  serviceNames: ["openai"],
+  ttlSeconds: 900,
+  label: "sprite-run"
+});
+
+const program = Effect.gen(function* () {
+  const proxy = yield* AgentVaultSandboxProxy;
+  const prepared = yield* proxy.prepareForSandbox;
+
+  const env = AgentVaultSandboxProxy.unsafeMaterializeEnv(prepared);
+  const caPem = AgentVaultSandboxProxy.unsafeMaterializeCaCertificate(prepared);
+
+  // Write caPem to prepared.certPath inside the Sprite filesystem.
+  // Start the Sprite command with env plus prepared.sentinelEnv.
+  return {
+    expiresAt: prepared.expiresAt,
+    certPath: prepared.certPath,
+    envKeys: Object.keys(env),
+    credentialKeys: prepared.credentialKeys
+  };
+}).pipe(Effect.provide(ProxyLayer));
+
+await Effect.runPromise(program);
+```
+
+`prepared.env` and `prepared.caCertificate` are `Redacted` values. Only materialize them at the host-to-sandbox boundary that writes the CA PEM and starts the sandbox command.
+
+## Sprite flow
+
+1. The operator selects service names and credential keys in the vault UI.
+2. The backend mints a scoped session for the selected vault.
+3. The backend writes the CA PEM into the Sprite filesystem at `certPath`.
+4. The Sprite process starts with Agent Vault proxy env plus sentinel env values like `OPENAI_API_KEY=__AGENT_VAULT__:OPENAI_API_KEY`.
+5. The Sprite makes normal provider API calls; Agent Vault injects the real credentials while forwarding.
+
+## Enforcement boundary
+
+The current Agent Vault session API mints a proxy token scoped to a vault role. `credentialKeys` and `serviceNames` in the Effect layer are launcher metadata and startup ergonomics, not a server-enforced allowlist yet.
+
+The server-enforced version should extend scoped sessions with:
+
+```json
+{
+  "vault": "default",
+  "vault_role": "proxy",
+  "ttl_seconds": 900,
+  "label": "sprite-run",
+  "service_names": ["openai"],
+  "credential_keys": ["OPENAI_API_KEY"]
+}
+```
+
+The broker would persist those allowlists on the scoped session and, during request injection, require both:
+
+- The matched service name is in `service_names`.
+- Every credential key referenced by the matched service is in `credential_keys`.
+
+Until that server-side allowlist lands, use strict vault design for production isolation: create a vault per trust boundary, keep `unmatched_host_policy=deny`, and place only the services and credentials that the Sprite should be able to reach in that vault.

@@ -8,6 +8,8 @@ export interface CreateSessionOptions {
   /** Session TTL in seconds (300-604800, i.e. 5 minutes to 7 days).
    *  Defaults to the server's 24h. */
   ttlSeconds?: number;
+  /** Human-readable label shown in the Agent Vault tokens UI. */
+  label?: string;
 }
 
 /**
@@ -114,6 +116,7 @@ export class SessionsResource {
       this.httpClient.post<ScopedSession>("/v1/sessions", {
         vault: this.vaultName,
         ttl_seconds: options?.ttlSeconds,
+        label: options?.label,
       }),
       this.getMitmInfo(),
     ]);
