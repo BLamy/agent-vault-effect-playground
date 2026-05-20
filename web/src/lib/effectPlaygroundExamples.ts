@@ -30,6 +30,8 @@ export const playgroundExamples: ReadonlyArray<PlaygroundExample> = [
 
   return {
     vault: proxy.vaultName,
+    sandbox: proxy.sandboxRuntime.label,
+    ai: proxy.aiProvider.label,
     services: proxy.selectedServices.map((service) => service.name),
     credentialKeys: proxy.selectedCredentialKeys
   };
@@ -43,6 +45,7 @@ export const playgroundExamples: ReadonlyArray<PlaygroundExample> = [
   const proxy = yield* AgentVaultSandboxProxy;
 
   return {
+    sandbox: proxy.sandboxRuntime.launchTarget,
     certPath: proxy.certPath,
     proxyEnv: Object.fromEntries(
       Object.entries(proxy.proxyEnv).map(([key, value]) => [key, "<redacted>"])
@@ -66,7 +69,9 @@ export const playgroundExamples: ReadonlyArray<PlaygroundExample> = [
   }
 
   return {
-    request: "fetch('https://api.openai.com/v1/responses', ...)",
+    ai: proxy.aiProvider.label,
+    model: proxy.aiProvider.defaultModel,
+    request: \`fetch('\${proxy.aiProvider.requestUrl}', ...)\`,
     authHeader: "Bearer <sentinel>",
     routedBy: Object.keys(proxy.proxyEnv)
   };
@@ -109,6 +114,17 @@ export function runPlaygroundExample(
             host: service.host,
             credentialKeys: service.credentialKeys,
           })),
+          sandbox: {
+            id: proxy.sandboxRuntime.id,
+            label: proxy.sandboxRuntime.label,
+            launchTarget: proxy.sandboxRuntime.launchTarget,
+          },
+          ai: {
+            id: proxy.aiProvider.id,
+            label: proxy.aiProvider.label,
+            model: proxy.aiProvider.defaultModel,
+            requestUrl: proxy.aiProvider.requestUrl,
+          },
           credentialKeys: proxy.selectedCredentialKeys,
         };
       }).pipe(Effect.provide(layer));
@@ -116,6 +132,8 @@ export function runPlaygroundExample(
       return Effect.gen(function* () {
         const proxy = yield* AgentVaultSandboxProxy;
         return {
+          sandbox: proxy.sandboxRuntime.label,
+          launchTarget: proxy.sandboxRuntime.launchTarget,
           certPath: proxy.certPath,
           proxyEnv: Object.fromEntries(
             Object.entries(proxy.proxyEnv).map(([key, value]) => [
@@ -140,7 +158,9 @@ export function runPlaygroundExample(
         }
 
         return {
-          request: "fetch('https://api.openai.com/v1/responses', { headers })",
+          ai: proxy.aiProvider.label,
+          model: proxy.aiProvider.defaultModel,
+          request: `fetch('${proxy.aiProvider.requestUrl}', { headers })`,
           authHeader: "Bearer <sentinel>",
           proxyEnvKeys: Object.keys(proxy.proxyEnv),
           result: "The MITM proxy replaces the sentinel with the stored credential before forwarding.",

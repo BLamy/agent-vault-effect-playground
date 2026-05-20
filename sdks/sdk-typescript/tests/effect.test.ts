@@ -36,6 +36,18 @@ describe("AgentVaultSandboxProxy", () => {
         certPath: "/etc/agent-vault/ca.pem",
         ttlSeconds: 600,
         label: "sprite",
+        sandbox: {
+          id: "sprite",
+          label: "Sprite",
+          launchTarget: "Sprite agent command",
+          certPath: "/etc/agent-vault/ca.pem",
+        },
+        ai: {
+          provider: "openai",
+          label: "OpenAI",
+          model: "gpt-4.1-mini",
+          requestUrl: "https://api.openai.com/v1/responses",
+        },
         credentialKeys: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
         serviceNames: ["openai"],
       }),
@@ -52,6 +64,8 @@ describe("AgentVaultSandboxProxy", () => {
       "/etc/agent-vault/ca.pem",
     );
     expect(unsafeMaterializeCaCertificate(prepared)).toContain("FAKE");
+    expect(prepared.sandbox?.id).toBe("sprite");
+    expect(prepared.ai?.provider).toBe("openai");
     expect(Object.keys(prepared.sentinelEnv)).toEqual([
       "ANTHROPIC_API_KEY",
       "OPENAI_API_KEY",

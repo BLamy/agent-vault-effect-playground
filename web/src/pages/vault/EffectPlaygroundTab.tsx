@@ -4,15 +4,24 @@ import Button from "../../components/Button";
 import CopyButton from "../../components/CopyButton";
 import EffectCodeViewer from "../../components/EffectCodeViewer";
 import Input from "../../components/Input";
+import SegmentedTabs from "../../components/SegmentedTabs";
 import { apiFetch } from "../../lib/api";
 import {
+  aiProviderById,
+  aiProviderOptions,
   createEffectApiSnippet,
   credentialKeysForService,
+  defaultAiProviderForVault,
   makeSandboxProxyConfig,
   proxyEnvKeys,
   redactedDisplay,
+  sandboxRuntimeById,
+  sandboxRuntimeOptions,
+  selectionForAiProvider,
   serviceDisplayName,
+  type AiProviderId,
   type SandboxProxyConfig,
+  type SandboxRuntimeId,
   type VaultService,
 } from "../../lib/effectSandboxProxy";
 import {
@@ -31,6 +40,9 @@ export default function EffectPlaygroundTab() {
   const [selectedCredentialKeys, setSelectedCredentialKeys] = useState<string[]>([]);
   const [selectedServiceNames, setSelectedServiceNames] = useState<string[]>([]);
   const [certPath, setCertPath] = useState(defaultCertPath);
+  const [sandboxRuntimeId, setSandboxRuntimeId] =
+    useState<SandboxRuntimeId>("sprite");
+  const [aiProviderId, setAiProviderId] = useState<AiProviderId>("openai");
   const [exampleId, setExampleId] = useState<PlaygroundExampleId>("inventory");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -69,15 +81,35 @@ export default function EffectPlaygroundTab() {
         const enabledServiceNames = nextServices
           .filter((service) => service.enabled !== false)
           .map(serviceDisplayName);
-        const referencedKeys = referencedCredentialKeys(
-          nextServices.filter((service) => enabledServiceNames.includes(serviceDisplayName(service))),
-          nextCredentialKeys,
-        );
+        const defaultAiProviderId = defaultAiProviderForVault({
+          credentialKeys: nextCredentialKeys,
+          services: nextServices,
+        });
+        const aiSelection = selectionForAiProvider({
+          aiProviderId: defaultAiProviderId,
+          availableCredentialKeys: nextCredentialKeys,
+          services: nextServices,
+        });
+        const defaultServiceNames = [
+          ...(aiSelection.serviceNames.length > 0
+            ? aiSelection.serviceNames
+            : enabledServiceNames),
+        ];
+        const referencedKeys =
+          aiSelection.credentialKeys.length > 0
+            ? [...aiSelection.credentialKeys]
+            : referencedCredentialKeys(
+                nextServices.filter((service) =>
+                  defaultServiceNames.includes(serviceDisplayName(service)),
+                ),
+                nextCredentialKeys,
+              );
 
         if (!cancelled) {
           setCredentialKeys(nextCredentialKeys);
           setServices(nextServices);
-          setSelectedServiceNames(enabledServiceNames);
+          setAiProviderId(defaultAiProviderId);
+          setSelectedServiceNames(defaultServiceNames);
           setSelectedCredentialKeys(referencedKeys);
         }
       } catch (err: unknown) {
@@ -107,6 +139,8 @@ export default function EffectPlaygroundTab() {
             services,
             selectedCredentialKeys,
             selectedServiceNames,
+            sandboxRuntimeId,
+            aiProviderId,
             certPath,
           }),
         ),
@@ -117,6 +151,8 @@ export default function EffectPlaygroundTab() {
       services,
       selectedCredentialKeys,
       selectedServiceNames,
+      sandboxRuntimeId,
+      aiProviderId,
       certPath,
     ],
   );
@@ -136,6 +172,20 @@ export default function EffectPlaygroundTab() {
   );
   const codeSnippet = proxyConfig ? createEffectApiSnippet(proxyConfig) : "";
   const preview = proxyConfig ? sanitizeProxyConfig(proxyConfig) : null;
+  const currentSandboxRuntime = sandboxRuntimeById(sandboxRuntimeId);
+  const currentAiProvider = aiProviderById(aiProviderId);
+  const currentAiSelection = useMemo(
+    () =>
+      selectionForAiProvider({
+        aiProviderId,
+        availableCredentialKeys: credentialKeys,
+        services,
+      }),
+    [aiProviderId, credentialKeys, services],
+  );
+  const missingAiCredentialKeys = currentAiProvider.credentialKeys.filter(
+    (key) => !credentialKeys.includes(key),
+  );
 
   async function runExample() {
     if (!proxyConfig) return;
@@ -186,6 +236,36 @@ export default function EffectPlaygroundTab() {
     setSelectedCredentialKeys(referencedCredentialKeys(selectedServices, credentialKeys));
   }
 
+  function selectSandboxRuntime(next: SandboxRuntimeId) {
+    const nextRuntime = sandboxRuntimeById(next);
+    const defaultPaths = new Set<string>(
+      sandboxRuntimeOptions.map((option) => option.defaultCertPath),
+    );
+    setSandboxRuntimeId(next);
+    setCertPath((prev) =>
+      defaultPaths.has(prev.trim()) ? nextRuntime.defaultCertPath : prev,
+    );
+    setLayerOutput("");
+    setRunOutput("");
+  }
+
+  function selectAiProvider(next: AiProviderId) {
+    setAiProviderId(next);
+    setLayerOutput("");
+    setRunOutput("");
+    if (next === "custom") {
+      return;
+    }
+
+    const selection = selectionForAiProvider({
+      aiProviderId: next,
+      availableCredentialKeys: credentialKeys,
+      services,
+    });
+    setSelectedServiceNames([...selection.serviceNames]);
+    setSelectedCredentialKeys([...selection.credentialKeys]);
+  }
+
   function clearSelection() {
     setSelectedCredentialKeys([]);
     setSelectedServiceNames([]);
@@ -219,6 +299,102 @@ export default function EffectPlaygroundTab() {
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,460px)_minmax(0,1fr)] gap-5">
           <div className="space-y-5">
+            <Panel title="Target">
+              <div className="space-y-5">
+                <div>
+                  <div className="text-xs font-medium text-text-muted mb-2">
+                    Sandbox
+                  </div>
+                  <SegmentedTabs
+                    ariaLabel="Sandbox runtime"
+                    value={sandboxRuntimeId}
+                    onChange={selectSandboxRuntime}
+                    options={sandboxRuntimeOptions.map((option) => ({
+                      value: option.id,
+                      label: option.label,
+                    }))}
+                  />
+                  <div className="mt-3 rounded-lg border border-border bg-bg p-3">
+                    <div className="text-sm font-semibold text-text">
+                      {currentSandboxRuntime.launchTarget}
+                    </div>
+                    <div className="mt-1 text-xs text-text-muted leading-relaxed">
+                      {currentSandboxRuntime.description}
+                    </div>
+                    <div className="mt-3 text-[11px] font-mono text-text-dim">
+                      Default CA {currentSandboxRuntime.defaultCertPath}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs font-medium text-text-muted mb-2">
+                    AI provider
+                  </div>
+                  <SegmentedTabs
+                    ariaLabel="AI provider"
+                    value={aiProviderId}
+                    onChange={selectAiProvider}
+                    options={aiProviderOptions.map((option) => ({
+                      value: option.id,
+                      label: option.label,
+                    }))}
+                  />
+                  <div className="mt-3 rounded-lg border border-border bg-bg p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-text">
+                          {currentAiProvider.defaultModel}
+                        </div>
+                        <div className="mt-1 text-xs text-text-muted leading-relaxed">
+                          {currentAiProvider.description}
+                        </div>
+                      </div>
+                      <span className="shrink-0 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-mono text-text-muted">
+                        {currentAiProvider.id}
+                      </span>
+                    </div>
+                    <div className="mt-3 text-[11px] font-mono text-text-dim break-all">
+                      {currentAiProvider.requestUrl}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {currentAiProvider.credentialKeys.length === 0 ? (
+                        <span className="px-2 py-1 rounded-md border border-border bg-surface text-[11px] text-text-muted">
+                          manual credentials
+                        </span>
+                      ) : (
+                        currentAiProvider.credentialKeys.map((key) => {
+                          const available = credentialKeys.includes(key);
+                          return (
+                            <span
+                              key={key}
+                              className={`px-2 py-1 rounded-md border text-[11px] font-mono ${
+                                available
+                                  ? "border-success/20 bg-success-bg text-success"
+                                  : "border-danger/20 bg-danger-bg text-danger"
+                              }`}
+                            >
+                              {key}
+                            </span>
+                          );
+                        })
+                      )}
+                    </div>
+                    {currentAiSelection.serviceNames.length > 0 && (
+                      <div className="mt-3 text-xs text-text-muted">
+                        Matched services: {currentAiSelection.serviceNames.join(", ")}
+                      </div>
+                    )}
+                    {missingAiCredentialKeys.length > 0 && (
+                      <div className="mt-3 text-xs text-danger">
+                        Missing credential key: {missingAiCredentialKeys.join(", ")}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Panel>
+
             <Panel title="Services">
               <div className="space-y-2">
                 {services.length === 0 ? (
@@ -488,6 +664,17 @@ function runGeneratedLayerPreview(
       return {
         status: "prepared",
         vaultName: config.vaultName,
+        sandboxRuntime: {
+          id: config.sandboxRuntime.id,
+          label: config.sandboxRuntime.label,
+          launchTarget: config.sandboxRuntime.launchTarget,
+        },
+        aiProvider: {
+          id: config.aiProvider.id,
+          label: config.aiProvider.label,
+          model: config.aiProvider.defaultModel,
+          requestUrl: config.aiProvider.requestUrl,
+        },
         expiresAt: session.expires_at ?? "<server default>",
         certPath: config.certPath,
         session: {
@@ -557,6 +744,17 @@ function EmptyPanelText({ children }: { children: ReactNode }) {
 interface GeneratedLayerRunOutput {
   readonly status: "prepared";
   readonly vaultName: string;
+  readonly sandboxRuntime: {
+    readonly id: string;
+    readonly label: string;
+    readonly launchTarget: string;
+  };
+  readonly aiProvider: {
+    readonly id: string;
+    readonly label: string;
+    readonly model: string;
+    readonly requestUrl: string;
+  };
   readonly expiresAt: string;
   readonly certPath: string;
   readonly session: {
@@ -608,6 +806,17 @@ function sanitizeProxyConfig(config: SandboxProxyConfig) {
   return {
     vaultName: config.vaultName,
     sessionEndpoint: config.sessionEndpoint,
+    sandboxRuntime: {
+      id: config.sandboxRuntime.id,
+      label: config.sandboxRuntime.label,
+      launchTarget: config.sandboxRuntime.launchTarget,
+    },
+    aiProvider: {
+      id: config.aiProvider.id,
+      label: config.aiProvider.label,
+      model: config.aiProvider.defaultModel,
+      requestUrl: config.aiProvider.requestUrl,
+    },
     certPath: config.certPath,
     selectedCredentialKeys: config.selectedCredentialKeys,
     selectedServices: config.selectedServices,

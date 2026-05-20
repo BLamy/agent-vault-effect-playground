@@ -19,9 +19,27 @@ export interface AgentVaultSessionClient {
   };
 }
 
+export interface AgentVaultSandboxTarget {
+  readonly id: string;
+  readonly label?: string;
+  readonly launchTarget?: string;
+  readonly certPath?: string;
+}
+
+export interface AgentVaultAiTarget {
+  readonly provider: string;
+  readonly label?: string;
+  readonly model?: string;
+  readonly requestUrl?: string;
+  readonly credentialKeys?: ReadonlyArray<string>;
+  readonly serviceNames?: ReadonlyArray<string>;
+}
+
 export interface AgentVaultSandboxProxyOptions extends AgentVaultConfig {
   readonly vault: string;
   readonly certPath: string;
+  readonly sandbox?: AgentVaultSandboxTarget;
+  readonly ai?: AgentVaultAiTarget;
   readonly ttlSeconds?: number;
   readonly label?: string;
   readonly credentialKeys?: ReadonlyArray<string>;
@@ -33,6 +51,8 @@ export interface PreparedSandboxProxy {
   readonly vault: string;
   readonly expiresAt: string;
   readonly certPath: string;
+  readonly sandbox?: AgentVaultSandboxTarget;
+  readonly ai?: AgentVaultAiTarget;
   readonly credentialKeys: ReadonlyArray<string>;
   readonly serviceNames: ReadonlyArray<string>;
   readonly env: Record<string, Redacted.Redacted<string>>;
@@ -112,6 +132,8 @@ export function prepareForSandbox(
         vault: options.vault,
         expiresAt: session.expiresAt,
         certPath: options.certPath,
+        sandbox: options.sandbox,
+        ai: options.ai,
         credentialKeys,
         serviceNames: unique(options.serviceNames ?? []),
         env: redactRecord(env),
