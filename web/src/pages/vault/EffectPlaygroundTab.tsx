@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Effect, Either } from "effect";
 import Button from "../../components/Button";
 import CopyButton from "../../components/CopyButton";
+import EffectCodeViewer from "../../components/EffectCodeViewer";
 import Input from "../../components/Input";
 import { apiFetch } from "../../lib/api";
 import {
   createEffectApiSnippet,
   credentialKeysForService,
   makeSandboxProxyConfig,
+  proxyEnvKeys,
   redactedDisplay,
   serviceDisplayName,
   type SandboxProxyConfig,
@@ -35,6 +37,9 @@ export default function EffectPlaygroundTab() {
   const [running, setRunning] = useState(false);
   const [runOutput, setRunOutput] = useState("");
   const [runError, setRunError] = useState("");
+  const [runningLayer, setRunningLayer] = useState(false);
+  const [layerOutput, setLayerOutput] = useState("");
+  const [layerError, setLayerError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -150,6 +155,27 @@ export default function EffectPlaygroundTab() {
       setRunError(err instanceof Error ? err.message : "Example failed.");
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function runGeneratedLayer() {
+    if (!proxyConfig) return;
+    setRunningLayer(true);
+    setLayerError("");
+    setLayerOutput("");
+    try {
+      const result = await Effect.runPromise(
+        Effect.either(runGeneratedLayerPreview(proxyConfig)),
+      );
+      if (Either.isLeft(result)) {
+        setLayerError(result.left.message);
+      } else {
+        setLayerOutput(JSON.stringify(result.right, null, 2));
+      }
+    } catch (err: unknown) {
+      setLayerError(err instanceof Error ? err.message : "Generated layer failed.");
+    } finally {
+      setRunningLayer(false);
     }
   }
 
@@ -312,18 +338,44 @@ export default function EffectPlaygroundTab() {
               title="Generated Layer"
               action={
                 codeSnippet ? (
-                  <CopyButton
-                    value={codeSnippet}
-                    label="Copy"
-                    copiedLabel="Copied"
-                    className="px-3 py-1.5 rounded-md border border-border bg-surface text-xs font-semibold text-text hover:bg-bg transition-colors"
-                  />
+                  <div className="flex items-center gap-2">
+                    <CopyButton
+                      value={codeSnippet}
+                      label="Copy"
+                      copiedLabel="Copied"
+                      className="px-3 py-1.5 rounded-md border border-border bg-surface text-xs font-semibold text-text hover:bg-bg transition-colors"
+                    />
+                    <Button
+                      onClick={runGeneratedLayer}
+                      loading={runningLayer}
+                      disabled={!proxyConfig}
+                      className="!px-3 !py-1.5 !text-xs"
+                    >
+                      Run layer
+                    </Button>
+                  </div>
                 ) : undefined
               }
             >
-              <pre className="max-h-[420px] overflow-auto rounded-lg bg-[#0b0d10] border border-border p-4 text-xs text-text-muted leading-relaxed">
-                <code>{codeSnippet || "Select a valid sandbox mount path."}</code>
-              </pre>
+              {codeSnippet ? (
+                <EffectCodeViewer
+                  value={codeSnippet}
+                  maxHeight={420}
+                  ariaLabel="Generated Agent Vault Effect layer"
+                />
+              ) : (
+                <pre className="max-h-[420px] overflow-auto rounded-lg bg-[#0b0d10] border border-border p-4 text-xs text-text-muted leading-relaxed">
+                  <code>Select a valid sandbox mount path.</code>
+                </pre>
+              )}
+              {layerError && (
+                <ErrorBanner message={layerError} className="mt-3" />
+              )}
+              {layerOutput && (
+                <pre className="mt-4 max-h-[260px] overflow-auto rounded-lg bg-bg border border-border p-4 text-xs text-text-muted leading-relaxed">
+                  <code>{layerOutput}</code>
+                </pre>
+              )}
             </Panel>
 
             <Panel title="Preview">
@@ -358,9 +410,12 @@ export default function EffectPlaygroundTab() {
               <div className="text-xs text-text-muted mb-3">
                 {currentExample.description}
               </div>
-              <pre className="max-h-[260px] overflow-auto rounded-lg bg-[#0b0d10] border border-border p-4 text-xs text-text-muted leading-relaxed">
-                <code>{currentExample.code}</code>
-              </pre>
+              <EffectCodeViewer
+                value={currentExample.code}
+                maxHeight={260}
+                ariaLabel={`${currentExample.title} code`}
+                fileName={`${currentExample.id}.ts`}
+              />
               <div className="mt-4 flex items-center gap-3">
                 <Button onClick={runExample} loading={running} disabled={!proxyConfig}>
                   Run example
@@ -382,6 +437,93 @@ export default function EffectPlaygroundTab() {
       )}
     </div>
   );
+}
+
+function runGeneratedLayerPreview(
+  config: SandboxProxyConfig,
+): Effect.Effect<GeneratedLayerRunOutput, Error> {
+  return Effect.tryPromise({
+    try: async () => {
+      const sessionResp = await apiFetch("/v1/sessions", {
+        method: "POST",
+        body: JSON.stringify({
+          vault: config.vaultName,
+          ttl_seconds: 900,
+          label: "effect-playground-generated-layer",
+        }),
+      });
+      if (!sessionResp.ok) {
+        throw new Error(await responseError(sessionResp, "Failed to mint sandbox session."));
+      }
+
+      const session = (await sessionResp.json()) as {
+        readonly token?: string;
+        readonly expires_at?: string;
+        readonly av_addr?: string;
+      };
+
+      const caResp = await apiFetch("/v1/mitm/ca.pem", {
+        headers: { Accept: "text/plain" },
+      });
+      if (!caResp.ok) {
+        throw new Error(
+          caResp.status === 404
+            ? "Agent Vault MITM proxy is disabled for this server."
+            : await responseError(caResp, "Failed to read MITM CA certificate."),
+        );
+      }
+
+      const caCertificate = await caResp.text();
+      const mitmPort = caResp.headers.get("X-MITM-Port") || "14322";
+      const mitmTls = caResp.headers.get("X-MITM-TLS") === "1";
+      const caEnvKeys = [
+        "SSL_CERT_FILE",
+        "NODE_EXTRA_CA_CERTS",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "DENO_CERT",
+      ];
+
+      return {
+        status: "prepared",
+        vaultName: config.vaultName,
+        expiresAt: session.expires_at ?? "<server default>",
+        certPath: config.certPath,
+        session: {
+          token: "<redacted>",
+          address: session.av_addr || window.location.origin,
+        },
+        mitm: {
+          port: mitmPort,
+          tls: mitmTls,
+          caCertificate: "<redacted>",
+          caCertificateBytes: caCertificate.length,
+        },
+        proxyEnv: Object.fromEntries(
+          proxyEnvKeys.map((key) => [
+            key,
+            caEnvKeys.includes(key) ? config.certPath : "<redacted>",
+          ]),
+        ),
+        selectedServices: config.selectedServices.map((service) => ({
+          name: service.name,
+          host: service.host,
+          credentialKeys: service.credentialKeys,
+        })),
+        sentinelEnvKeys: Object.keys(config.sentinelEnv),
+        notes: [
+          "Minted a real short-lived proxy session.",
+          "The session token, proxy URL, and CA PEM were redacted from this output.",
+          "serviceNames and credentialKeys are launcher metadata until Agent Vault adds server-enforced session allowlists.",
+        ],
+      };
+    },
+    catch: (cause) =>
+      cause instanceof Error
+        ? cause
+        : Object.assign(new Error("Generated layer failed."), { cause }),
+  });
 }
 
 function Panel({
@@ -412,6 +554,31 @@ function EmptyPanelText({ children }: { children: ReactNode }) {
   );
 }
 
+interface GeneratedLayerRunOutput {
+  readonly status: "prepared";
+  readonly vaultName: string;
+  readonly expiresAt: string;
+  readonly certPath: string;
+  readonly session: {
+    readonly token: "<redacted>";
+    readonly address: string;
+  };
+  readonly mitm: {
+    readonly port: string;
+    readonly tls: boolean;
+    readonly caCertificate: "<redacted>";
+    readonly caCertificateBytes: number;
+  };
+  readonly proxyEnv: Record<string, string>;
+  readonly selectedServices: ReadonlyArray<{
+    readonly name: string;
+    readonly host: string;
+    readonly credentialKeys: ReadonlyArray<string>;
+  }>;
+  readonly sentinelEnvKeys: ReadonlyArray<string>;
+  readonly notes: ReadonlyArray<string>;
+}
+
 function referencedCredentialKeys(
   services: ReadonlyArray<VaultService>,
   availableKeys: ReadonlyArray<string>,
@@ -424,6 +591,17 @@ function referencedCredentialKeys(
       ),
     ),
   ].sort();
+}
+
+async function responseError(resp: Response, fallback: string) {
+  const body = await resp.json().catch(() => ({}));
+  if (typeof body.error === "string") {
+    return body.error;
+  }
+  if (typeof body.message === "string") {
+    return body.message;
+  }
+  return fallback;
 }
 
 function sanitizeProxyConfig(config: SandboxProxyConfig) {
