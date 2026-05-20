@@ -1,7 +1,9 @@
-import { Effect, Redacted } from "effect";
+import { Effect, Layer, Redacted } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import {
+  AgentVaultAiHarness,
   AgentVaultSandboxProxy,
+  AgentVaultSandboxTarget,
   prepareForSandbox,
   unsafeMaterializeCaCertificate,
   unsafeMaterializeEnv,
@@ -42,11 +44,16 @@ describe("AgentVaultSandboxProxy", () => {
           launchTarget: "Sprite agent command",
           certPath: "/etc/agent-vault/ca.pem",
         },
-        ai: {
-          provider: "openai",
-          label: "OpenAI",
-          model: "gpt-4.1-mini",
+        aiHarness: {
+          id: "codex",
+          label: "Codex",
+          packageName: "@openai/codex",
+          packageVersion: "latest",
+          installScript: "npm install -g @openai/codex@latest",
+          runScript: "codex exec \"$AGENT_PROMPT\"",
           requestUrl: "https://api.openai.com/v1/responses",
+          credentialKeys: ["OPENAI_API_KEY"],
+          serviceNames: ["openai"],
         },
         credentialKeys: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
         serviceNames: ["openai"],
@@ -65,7 +72,7 @@ describe("AgentVaultSandboxProxy", () => {
     );
     expect(unsafeMaterializeCaCertificate(prepared)).toContain("FAKE");
     expect(prepared.sandbox?.id).toBe("sprite");
-    expect(prepared.ai?.provider).toBe("openai");
+    expect(prepared.aiHarness?.id).toBe("codex");
     expect(Object.keys(prepared.sentinelEnv)).toEqual([
       "ANTHROPIC_API_KEY",
       "OPENAI_API_KEY",
@@ -132,5 +139,59 @@ describe("AgentVaultSandboxProxy", () => {
 
     const prepared = await Effect.runPromise(program);
     expect(prepared.credentialKeys).toEqual(["OPENAI_API_KEY"]);
+  });
+
+  it("composes sandbox, AI, and proxy layers", async () => {
+    const client: AgentVaultSessionClient = {
+      vault: () => ({
+        sessions: {
+          create: vi.fn().mockResolvedValue({
+            token: "session-token",
+            expiresAt: "2026-05-20T00:00:00Z",
+            address: "http://localhost:14321",
+            containerConfig: fakeContainerConfig,
+          }),
+        },
+      }),
+    };
+    const SandboxLayer = AgentVaultSandboxTarget.layer({
+      id: "almostnode",
+      label: "AlmostNode",
+      launchTarget: "AlmostNode worker command",
+      certPath: "/home/sandbox/.agent-vault/ca.pem",
+    });
+    const HarnessLayer = AgentVaultAiHarness.layer({
+      id: "claude",
+      label: "Claude Code",
+      packageName: "@anthropic-ai/claude-code",
+      packageVersion: "latest",
+      installScript: "npm install -g @anthropic-ai/claude-code@latest",
+      runScript: "claude -p \"$AGENT_PROMPT\"",
+      requestUrl: "https://api.anthropic.com/v1/messages",
+      credentialKeys: ["ANTHROPIC_API_KEY"],
+      serviceNames: ["anthropic"],
+    });
+    const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
+      client,
+      vault: "default",
+    });
+    const AppLayer = ProxyLayer.pipe(
+      Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer)),
+    );
+
+    const program = Effect.gen(function* () {
+      const sandbox = yield* AgentVaultSandboxTarget;
+      const aiHarness = yield* AgentVaultAiHarness;
+      const proxy = yield* AgentVaultSandboxProxy;
+      const prepared = yield* proxy.prepareForSandbox;
+      return { sandbox, aiHarness, prepared };
+    }).pipe(Effect.provide(AppLayer));
+
+    const result = await Effect.runPromise(program);
+    expect(result.sandbox.id).toBe("almostnode");
+    expect(result.aiHarness.id).toBe("claude");
+    expect(result.prepared.certPath).toBe("/home/sandbox/.agent-vault/ca.pem");
+    expect(result.prepared.credentialKeys).toEqual(["ANTHROPIC_API_KEY"]);
+    expect(result.prepared.serviceNames).toEqual(["anthropic"]);
   });
 });

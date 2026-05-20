@@ -36,14 +36,21 @@ export interface SandboxRuntimeOption {
   readonly launchTarget: string;
 }
 
-export type AiProviderId = "openai" | "anthropic" | "openrouter" | "custom";
+export type AiHarnessId = "codex" | "claude" | "opencode" | "gemini" | "custom";
 
-export interface AiProviderOption {
-  readonly id: AiProviderId;
+export interface AiHarnessOption {
+  readonly id: AiHarnessId;
   readonly label: string;
   readonly description: string;
-  readonly defaultModel: string;
+  readonly packageName: string;
+  readonly packageVersion: string;
+  readonly installScript: string;
+  readonly runScript: string;
+  readonly displayCommand: string;
+  readonly prompt: string;
+  readonly env: Record<string, string>;
   readonly credentialKeys: ReadonlyArray<string>;
+  readonly optionalCredentialKeys: ReadonlyArray<string>;
   readonly serviceHosts: ReadonlyArray<string>;
   readonly requestUrl: string;
 }
@@ -52,7 +59,7 @@ export interface SandboxProxyConfig {
   readonly vaultName: string;
   readonly sessionEndpoint: string;
   readonly sandboxRuntime: SandboxRuntimeOption;
-  readonly aiProvider: AiProviderOption;
+  readonly aiHarness: AiHarnessOption;
   readonly certPath: string;
   readonly selectedCredentialKeys: ReadonlyArray<string>;
   readonly selectedServices: ReadonlyArray<SandboxProxyService>;
@@ -70,6 +77,22 @@ export class SandboxProxyConfigError extends Data.TaggedError(
 export class AgentVaultSandboxProxy extends Context.Tag(
   "AgentVaultSandboxProxy",
 )<AgentVaultSandboxProxy, SandboxProxyConfig>() {}
+
+export class AgentVaultSandboxTarget extends Context.Tag(
+  "AgentVaultSandboxTarget",
+)<AgentVaultSandboxTarget, SandboxRuntimeOption>() {
+  static layer(target: SandboxRuntimeOption) {
+    return Layer.succeed(AgentVaultSandboxTarget, target);
+  }
+}
+
+export class AgentVaultAiHarness extends Context.Tag(
+  "AgentVaultAiHarness",
+)<AgentVaultAiHarness, AiHarnessOption>() {
+  static layer(harness: AiHarnessOption) {
+    return Layer.succeed(AgentVaultAiHarness, harness);
+  }
+}
 
 export const proxyEnvKeys = [
   "HTTP_PROXY",
@@ -108,49 +131,150 @@ export const sandboxRuntimeOptions = [
   },
 ] as const satisfies ReadonlyArray<SandboxRuntimeOption>;
 
-export const aiProviderOptions = [
+export const aiHarnessOptions = [
   {
-    id: "openai",
-    label: "OpenAI",
-    description: "Responses API routed through the Agent Vault proxy.",
-    defaultModel: "gpt-4.1-mini",
+    id: "codex",
+    label: "Codex",
+    description: "Installs and runs Codex in the sandbox with OpenAI traffic routed through Agent Vault.",
+    packageName: "@openai/codex",
+    packageVersion: "latest",
+    installScript: "npm install -g @openai/codex@latest",
+    runScript:
+      "AGENT_PROMPT=\"${AGENT_PROMPT:-Describe this sandbox}\" codex exec --skip-git-repo-check --ask-for-approval never --sandbox workspace-write --color never \"$AGENT_PROMPT\"",
+    displayCommand: "codex exec",
+    prompt: "Use the configured OpenAI credential through Agent Vault and report the model/account reachability.",
+    env: {
+      CI: "1",
+      NO_COLOR: "1",
+    },
     credentialKeys: ["OPENAI_API_KEY"],
+    optionalCredentialKeys: [],
     serviceHosts: ["api.openai.com"],
     requestUrl: "https://api.openai.com/v1/responses",
   },
   {
-    id: "anthropic",
-    label: "Anthropic",
-    description: "Messages API routed through the Agent Vault proxy.",
-    defaultModel: "claude-3-5-sonnet-latest",
+    id: "claude",
+    label: "Claude Code",
+    description: "Installs and runs Claude Code in the sandbox with Anthropic traffic routed through Agent Vault.",
+    packageName: "@anthropic-ai/claude-code",
+    packageVersion: "latest",
+    installScript: "npm install -g @anthropic-ai/claude-code@latest",
+    runScript:
+      "AGENT_PROMPT=\"${AGENT_PROMPT:-Describe this sandbox}\" claude -p \"$AGENT_PROMPT\"",
+    displayCommand: "claude -p",
+    prompt: "Use the configured Anthropic credential through Agent Vault and report the model/account reachability.",
+    env: {
+      CI: "1",
+      NO_COLOR: "1",
+    },
     credentialKeys: ["ANTHROPIC_API_KEY"],
+    optionalCredentialKeys: [],
     serviceHosts: ["api.anthropic.com"],
     requestUrl: "https://api.anthropic.com/v1/messages",
   },
   {
-    id: "openrouter",
-    label: "OpenRouter",
-    description: "OpenAI-compatible chat completions through OpenRouter.",
-    defaultModel: "openai/gpt-4.1-mini",
-    credentialKeys: ["OPENROUTER_API_KEY"],
-    serviceHosts: ["openrouter.ai", "api.openrouter.ai"],
-    requestUrl: "https://openrouter.ai/api/v1/chat/completions",
+    id: "opencode",
+    label: "OpenCode",
+    description: "Installs and runs OpenCode in the sandbox; whichever configured provider it calls is intercepted.",
+    packageName: "opencode-ai",
+    packageVersion: "latest",
+    installScript: "npm install -g opencode-ai@latest",
+    runScript:
+      "AGENT_PROMPT=\"${AGENT_PROMPT:-Describe this sandbox}\" opencode run \"$AGENT_PROMPT\"",
+    displayCommand: "opencode run",
+    prompt: "Use one configured AI provider through Agent Vault and report which outbound host was reached.",
+    env: {
+      CI: "1",
+      NO_COLOR: "1",
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+    },
+    credentialKeys: [],
+    optionalCredentialKeys: [
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
+      "OPENROUTER_API_KEY",
+      "GEMINI_API_KEY",
+      "GOOGLE_API_KEY",
+    ],
+    serviceHosts: [
+      "api.anthropic.com",
+      "api.openai.com",
+      "openrouter.ai",
+      "api.openrouter.ai",
+      "generativelanguage.googleapis.com",
+    ],
+    requestUrl: "provider-selected-by-harness",
+  },
+  {
+    id: "gemini",
+    label: "Gemini CLI",
+    description: "Installs and runs Gemini CLI in the sandbox with Google API traffic routed through Agent Vault.",
+    packageName: "@google/gemini-cli",
+    packageVersion: "latest",
+    installScript: "npm install -g @google/gemini-cli@latest",
+    runScript:
+      "AGENT_PROMPT=\"${AGENT_PROMPT:-Describe this sandbox}\" gemini -p \"$AGENT_PROMPT\"",
+    displayCommand: "gemini -p",
+    prompt: "Use the configured Google/Gemini credential through Agent Vault and report the model/account reachability.",
+    env: {
+      CI: "1",
+      NO_COLOR: "1",
+    },
+    credentialKeys: [],
+    optionalCredentialKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    serviceHosts: ["generativelanguage.googleapis.com", "aiplatform.googleapis.com"],
+    requestUrl: "https://generativelanguage.googleapis.com",
   },
   {
     id: "custom",
-    label: "Custom",
-    description: "Use the manually selected services and credential keys.",
-    defaultModel: "configured-by-agent",
+    label: "Custom harness",
+    description: "Use the manually selected services and credential keys with your own harness command.",
+    packageName: "custom",
+    packageVersion: "manual",
+    installScript: "echo 'install your harness here'",
+    runScript: "echo 'run your harness here'",
+    displayCommand: "custom harness",
+    prompt: "configured-by-agent",
+    env: {},
     credentialKeys: [],
+    optionalCredentialKeys: [],
     serviceHosts: [],
     requestUrl: "configured-by-agent",
   },
-] as const satisfies ReadonlyArray<AiProviderOption>;
+] as const satisfies ReadonlyArray<AiHarnessOption>;
 
 const credentialPattern = /\{\{\s*([A-Z][A-Z0-9_]*)\s*\}\}/g;
 
+export function layerSandboxTarget(config: SandboxProxyConfig) {
+  return AgentVaultSandboxTarget.layer(config.sandboxRuntime);
+}
+
+export function layerAiHarness(config: SandboxProxyConfig) {
+  return AgentVaultAiHarness.layer(config.aiHarness);
+}
+
 export function layerSandboxProxy(config: SandboxProxyConfig) {
-  return Layer.succeed(AgentVaultSandboxProxy, config);
+  return Layer.effect(
+    AgentVaultSandboxProxy,
+    Effect.gen(function* () {
+      const sandboxRuntime = yield* AgentVaultSandboxTarget;
+      const aiHarness = yield* AgentVaultAiHarness;
+
+      return {
+        ...config,
+        sandboxRuntime,
+        aiHarness,
+      };
+    }),
+  );
+}
+
+export function composeSandboxProxyLayers(config: SandboxProxyConfig) {
+  const SandboxLayer = layerSandboxTarget(config);
+  const HarnessLayer = layerAiHarness(config);
+  const ProxyLayer = layerSandboxProxy(config);
+
+  return ProxyLayer.pipe(Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer)));
 }
 
 export function redactedDisplay(_value: Redacted.Redacted<string>): string {
@@ -202,47 +326,50 @@ export function sandboxRuntimeById(id: SandboxRuntimeId): SandboxRuntimeOption {
   );
 }
 
-export function aiProviderById(id: AiProviderId): AiProviderOption {
-  return aiProviderOptions.find((option) => option.id === id) ?? aiProviderOptions[0];
+export function aiHarnessById(id: AiHarnessId): AiHarnessOption {
+  return aiHarnessOptions.find((option) => option.id === id) ?? aiHarnessOptions[0];
 }
 
-export function defaultAiProviderForVault(input: {
+export function defaultAiHarnessForVault(input: {
   readonly credentialKeys: ReadonlyArray<string>;
   readonly services: ReadonlyArray<VaultService>;
-}): AiProviderId {
+}): AiHarnessId {
   const keys = new Set(input.credentialKeys);
 
   return (
-    aiProviderOptions.find(
-      (provider) =>
-        provider.id !== "custom" &&
-        (provider.credentialKeys.some((key) => keys.has(key)) ||
+    aiHarnessOptions.find(
+      (harness) =>
+        harness.id !== "custom" &&
+        ([...harness.credentialKeys, ...harness.optionalCredentialKeys].some(
+          (key) => keys.has(key),
+        ) ||
           input.services.some((service) =>
-            serviceHostMatches(service.host, provider.serviceHosts),
+            serviceHostMatches(service.host, harness.serviceHosts),
           )),
     )?.id ?? "custom"
   );
 }
 
-export function selectionForAiProvider(input: {
-  readonly aiProviderId: AiProviderId;
+export function selectionForAiHarness(input: {
+  readonly aiHarnessId: AiHarnessId;
   readonly availableCredentialKeys: ReadonlyArray<string>;
   readonly services: ReadonlyArray<VaultService>;
 }): {
   readonly credentialKeys: ReadonlyArray<string>;
   readonly serviceNames: ReadonlyArray<string>;
 } {
-  const provider = aiProviderById(input.aiProviderId);
-  if (provider.id === "custom") {
+  const harness = aiHarnessById(input.aiHarnessId);
+  if (harness.id === "custom") {
     return { credentialKeys: [], serviceNames: [] };
   }
 
   const availableCredentialKeys = new Set(input.availableCredentialKeys);
-  const credentialKeys = provider.credentialKeys.filter((key) =>
-    availableCredentialKeys.has(key),
-  );
+  const credentialKeys = unique([
+    ...harness.credentialKeys,
+    ...harness.optionalCredentialKeys,
+  ]).filter((key) => availableCredentialKeys.has(key));
   const serviceNames = input.services
-    .filter((service) => serviceHostMatches(service.host, provider.serviceHosts))
+    .filter((service) => serviceHostMatches(service.host, harness.serviceHosts))
     .map(serviceDisplayName)
     .sort();
 
@@ -256,12 +383,12 @@ export function makeSandboxProxyConfig(input: {
   readonly selectedCredentialKeys: ReadonlyArray<string>;
   readonly selectedServiceNames: ReadonlyArray<string>;
   readonly sandboxRuntimeId: SandboxRuntimeId;
-  readonly aiProviderId: AiProviderId;
+  readonly aiHarnessId: AiHarnessId;
   readonly certPath: string;
 }): Effect.Effect<SandboxProxyConfig, SandboxProxyConfigError> {
   return Effect.gen(function* () {
     const sandboxRuntime = sandboxRuntimeById(input.sandboxRuntimeId);
-    const aiProvider = aiProviderById(input.aiProviderId);
+    const aiHarness = aiHarnessById(input.aiHarnessId);
     const certPath = input.certPath.trim();
     if (certPath === "") {
       return yield* Effect.fail(
@@ -312,7 +439,7 @@ export function makeSandboxProxyConfig(input: {
       vaultName: input.vaultName,
       sessionEndpoint: "/v1/sessions",
       sandboxRuntime,
-      aiProvider,
+      aiHarness,
       certPath,
       selectedCredentialKeys,
       selectedServices,
@@ -340,52 +467,90 @@ export function createEffectApiSnippet(config: SandboxProxyConfig): string {
     null,
     2,
   );
-  const ai = JSON.stringify(
+  const aiHarness = JSON.stringify(
     {
-      provider: config.aiProvider.id,
-      label: config.aiProvider.label,
-      model: config.aiProvider.defaultModel,
-      requestUrl: config.aiProvider.requestUrl,
+      id: config.aiHarness.id,
+      label: config.aiHarness.label,
+      packageName: config.aiHarness.packageName,
+      packageVersion: config.aiHarness.packageVersion,
+      installScript: config.aiHarness.installScript,
+      runScript: config.aiHarness.runScript,
+      displayCommand: config.aiHarness.displayCommand,
+      prompt: config.aiHarness.prompt,
+      env: config.aiHarness.env,
+      requestUrl: config.aiHarness.requestUrl,
       credentialKeys: config.selectedCredentialKeys,
       serviceNames: config.selectedServices.map((service) => service.name),
+      serviceHosts: config.aiHarness.serviceHosts,
     },
     null,
     2,
   );
 
-  return `import { AgentVaultSandboxProxy } from "@infisical/agent-vault-sdk/effect";
-import { Effect } from "effect";
+  return `import {
+  AgentVaultAiHarness,
+  AgentVaultSandboxProxy,
+  AgentVaultSandboxTarget
+} from "@infisical/agent-vault-sdk/effect";
+import { Effect, Layer } from "effect";
 
 const SandboxTarget = ${sandbox} as const;
-const AiTarget = ${ai} as const;
+const AiHarness = ${aiHarness} as const;
 
-const ProxyLayer = AgentVaultSandboxProxy.layer({
+const SandboxLayer = AgentVaultSandboxTarget.layer(SandboxTarget);
+const HarnessLayer = AgentVaultAiHarness.layer(AiHarness);
+const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
   address: process.env.AGENT_VAULT_ADDR!,
   token: process.env.AGENT_VAULT_TOKEN!,
   vault: "${config.vaultName}",
-  certPath: "${config.certPath}",
-  sandbox: SandboxTarget,
-  ai: AiTarget,
+  ttlSeconds: 900,
+  label: "effect-playground-generated-layer",
   credentialKeys: ${credentialKeys},
   serviceNames: ${serviceNames}
 });
+const AppLayer = ProxyLayer.pipe(
+  Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer))
+);
 
 const program = Effect.gen(function* () {
+  const sandbox = yield* AgentVaultSandboxTarget;
+  const harness = yield* AgentVaultAiHarness;
   const proxy = yield* AgentVaultSandboxProxy;
   const prepared = yield* proxy.prepareForSandbox;
-  const env = AgentVaultSandboxProxy.unsafeMaterializeEnv(prepared);
+  const proxyEnv = AgentVaultSandboxProxy.unsafeMaterializeEnv(prepared);
   const caCertificate = AgentVaultSandboxProxy.unsafeMaterializeCaCertificate(prepared);
+  const runEnv = {
+    ...harness.env,
+    ...proxyEnv,
+    ...prepared.sentinelEnv
+  };
 
-  // write caCertificate to prepared.certPath in the selected sandbox
-  // start the sandbox command with env plus prepared.sentinelEnv
+  // In the sandbox adapter:
+  // 1. write caCertificate to prepared.certPath
+  // 2. install the harness package inside the sandbox with proxyEnv, but without sentinel keys
+  // 3. run harness.runScript inside the sandbox with runEnv
+  // Every HTTP client used by the harness now sees HTTP(S)_PROXY and the CA bundle.
   return {
-    sandbox: prepared.sandbox,
-    ai: prepared.ai,
-    envKeys: Object.keys(env),
+    sandbox,
+    harness: {
+      id: harness.id,
+      packageName: harness.packageName,
+      displayCommand: harness.displayCommand
+    },
+    installPhase: {
+      command: harness.installScript,
+      proxyEnvKeys: Object.keys(proxyEnv)
+    },
+    runPhase: {
+      command: harness.runScript,
+      envKeys: Object.keys(runEnv),
+      proxyEnvKeys: Object.keys(proxyEnv),
+      sentinelEnvKeys: Object.keys(prepared.sentinelEnv)
+    },
     caCertificateBytes: caCertificate.length,
     credentialKeys: prepared.credentialKeys
   };
-}).pipe(Effect.provide(ProxyLayer));
+}).pipe(Effect.provide(AppLayer));
 
 await Effect.runPromise(program);`;
 }

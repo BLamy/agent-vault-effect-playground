@@ -1,8 +1,10 @@
 import { Effect } from "effect";
 import {
+  AgentVaultAiHarness,
   AgentVaultSandboxProxy,
+  AgentVaultSandboxTarget,
   SandboxProxyConfigError,
-  layerSandboxProxy,
+  composeSandboxProxyLayers,
   redactedDisplay,
   type SandboxProxyConfig,
 } from "./effectSandboxProxy";
@@ -10,7 +12,7 @@ import {
 export type PlaygroundExampleId =
   | "inventory"
   | "proxy-layer"
-  | "provider-fetch"
+  | "harness-run"
   | "fail-closed";
 
 export interface PlaygroundExample {
@@ -24,41 +26,52 @@ export const playgroundExamples: ReadonlyArray<PlaygroundExample> = [
   {
     id: "inventory",
     title: "Inspect vault selection",
-    description: "Reads selected services and credential keys from the Effect service.",
-    code: `const program = Effect.gen(function* () {
+    description: "Reads the three composed layer services from the program environment.",
+    code: `const AppLayer = composeSandboxProxyLayers(config);
+
+const program = Effect.gen(function* () {
+  const sandbox = yield* AgentVaultSandboxTarget;
+  const harness = yield* AgentVaultAiHarness;
   const proxy = yield* AgentVaultSandboxProxy;
 
   return {
     vault: proxy.vaultName,
-    sandbox: proxy.sandboxRuntime.label,
-    ai: proxy.aiProvider.label,
+    layers: ["sandbox", "aiHarness", "agentVaultProxy"],
+    sandbox: sandbox.label,
+    harness: harness.label,
     services: proxy.selectedServices.map((service) => service.name),
     credentialKeys: proxy.selectedCredentialKeys
   };
-}).pipe(Effect.provide(layerSandboxProxy(config)));`,
+}).pipe(Effect.provide(AppLayer));`,
   },
   {
     id: "proxy-layer",
     title: "Build sandbox env",
     description: "Expands the proxy layer into env key names and CA mount metadata.",
-    code: `const program = Effect.gen(function* () {
+    code: `const AppLayer = composeSandboxProxyLayers(config);
+
+const program = Effect.gen(function* () {
+  const sandbox = yield* AgentVaultSandboxTarget;
   const proxy = yield* AgentVaultSandboxProxy;
 
   return {
-    sandbox: proxy.sandboxRuntime.launchTarget,
+    sandbox: sandbox.launchTarget,
     certPath: proxy.certPath,
     proxyEnv: Object.fromEntries(
       Object.entries(proxy.proxyEnv).map(([key, value]) => [key, "<redacted>"])
     ),
     sentinelEnvKeys: Object.keys(proxy.sentinelEnv)
   };
-}).pipe(Effect.provide(layerSandboxProxy(config)));`,
+}).pipe(Effect.provide(AppLayer));`,
   },
   {
-    id: "provider-fetch",
-    title: "Provider call through proxy",
-    description: "Models a Sprite calling a provider API with a sentinel key.",
-    code: `const program = Effect.gen(function* () {
+    id: "harness-run",
+    title: "Run harness through proxy",
+    description: "Models the sandbox launcher installing an AI harness, then running it with proxy env.",
+    code: `const AppLayer = composeSandboxProxyLayers(config);
+
+const program = Effect.gen(function* () {
+  const harness = yield* AgentVaultAiHarness;
   const proxy = yield* AgentVaultSandboxProxy;
   const apiKey = proxy.selectedCredentialKeys[0];
 
@@ -69,19 +82,28 @@ export const playgroundExamples: ReadonlyArray<PlaygroundExample> = [
   }
 
   return {
-    ai: proxy.aiProvider.label,
-    model: proxy.aiProvider.defaultModel,
-    request: \`fetch('\${proxy.aiProvider.requestUrl}', ...)\`,
-    authHeader: "Bearer <sentinel>",
-    routedBy: Object.keys(proxy.proxyEnv)
+    harness: harness.label,
+    installPhase: {
+      command: harness.installScript,
+      proxyEnvKeys: Object.keys(proxy.proxyEnv),
+      sentinelEnvKeys: []
+    },
+    runPhase: {
+      command: harness.runScript,
+      proxyEnvKeys: Object.keys(proxy.proxyEnv),
+      sentinelEnvKeys: Object.keys(proxy.sentinelEnv)
+    },
+    interceptedHosts: harness.serviceHosts
   };
-}).pipe(Effect.provide(layerSandboxProxy(config)));`,
+}).pipe(Effect.provide(AppLayer));`,
   },
   {
     id: "fail-closed",
     title: "Fail closed",
     description: "Shows the shape of an Effect failure when no secrets are selected.",
-    code: `const program = Effect.gen(function* () {
+    code: `const AppLayer = composeSandboxProxyLayers(config);
+
+const program = Effect.gen(function* () {
   const proxy = yield* AgentVaultSandboxProxy;
 
   if (proxy.selectedCredentialKeys.length === 0) {
@@ -93,7 +115,7 @@ export const playgroundExamples: ReadonlyArray<PlaygroundExample> = [
   }
 
   return "ready";
-}).pipe(Effect.provide(layerSandboxProxy(config)));`,
+}).pipe(Effect.provide(AppLayer));`,
   },
 ];
 
@@ -101,39 +123,45 @@ export function runPlaygroundExample(
   exampleId: PlaygroundExampleId,
   config: SandboxProxyConfig,
 ): Effect.Effect<unknown, SandboxProxyConfigError> {
-  const layer = layerSandboxProxy(config);
+  const layer = composeSandboxProxyLayers(config);
 
   switch (exampleId) {
     case "inventory":
       return Effect.gen(function* () {
+        const sandbox = yield* AgentVaultSandboxTarget;
+        const harness = yield* AgentVaultAiHarness;
         const proxy = yield* AgentVaultSandboxProxy;
         return {
           vault: proxy.vaultName,
+          layers: ["AgentVaultSandboxTarget", "AgentVaultAiHarness", "AgentVaultSandboxProxy"],
           services: proxy.selectedServices.map((service) => ({
             name: service.name,
             host: service.host,
             credentialKeys: service.credentialKeys,
           })),
           sandbox: {
-            id: proxy.sandboxRuntime.id,
-            label: proxy.sandboxRuntime.label,
-            launchTarget: proxy.sandboxRuntime.launchTarget,
+            id: sandbox.id,
+            label: sandbox.label,
+            launchTarget: sandbox.launchTarget,
           },
-          ai: {
-            id: proxy.aiProvider.id,
-            label: proxy.aiProvider.label,
-            model: proxy.aiProvider.defaultModel,
-            requestUrl: proxy.aiProvider.requestUrl,
+          aiHarness: {
+            id: harness.id,
+            label: harness.label,
+            packageName: harness.packageName,
+            packageVersion: harness.packageVersion,
+            displayCommand: harness.displayCommand,
+            requestUrl: harness.requestUrl,
           },
           credentialKeys: proxy.selectedCredentialKeys,
         };
       }).pipe(Effect.provide(layer));
     case "proxy-layer":
       return Effect.gen(function* () {
+        const sandbox = yield* AgentVaultSandboxTarget;
         const proxy = yield* AgentVaultSandboxProxy;
         return {
-          sandbox: proxy.sandboxRuntime.label,
-          launchTarget: proxy.sandboxRuntime.launchTarget,
+          sandbox: sandbox.label,
+          launchTarget: sandbox.launchTarget,
           certPath: proxy.certPath,
           proxyEnv: Object.fromEntries(
             Object.entries(proxy.proxyEnv).map(([key, value]) => [
@@ -145,8 +173,9 @@ export function runPlaygroundExample(
           notes: proxy.notes,
         };
       }).pipe(Effect.provide(layer));
-    case "provider-fetch":
+    case "harness-run":
       return Effect.gen(function* () {
+        const harness = yield* AgentVaultAiHarness;
         const proxy = yield* AgentVaultSandboxProxy;
         const apiKey = proxy.selectedCredentialKeys[0];
         if (!apiKey) {
@@ -158,12 +187,25 @@ export function runPlaygroundExample(
         }
 
         return {
-          ai: proxy.aiProvider.label,
-          model: proxy.aiProvider.defaultModel,
-          request: `fetch('${proxy.aiProvider.requestUrl}', { headers })`,
-          authHeader: "Bearer <sentinel>",
-          proxyEnvKeys: Object.keys(proxy.proxyEnv),
-          result: "The MITM proxy replaces the sentinel with the stored credential before forwarding.",
+          harness: {
+            id: harness.id,
+            label: harness.label,
+            packageName: `${harness.packageName}@${harness.packageVersion}`,
+            displayCommand: harness.displayCommand,
+          },
+          installPhase: {
+            command: harness.installScript,
+            proxyEnvKeys: Object.keys(proxy.proxyEnv),
+            sentinelEnvKeys: [],
+          },
+          runPhase: {
+            command: harness.runScript,
+            harnessEnvKeys: Object.keys(harness.env),
+            proxyEnvKeys: Object.keys(proxy.proxyEnv),
+            sentinelEnvKeys: Object.keys(proxy.sentinelEnv),
+          },
+          interceptedHosts: harness.serviceHosts,
+          result: "The sandbox runs the harness normally; HTTP(S)_PROXY and CA env route outbound API calls through Agent Vault.",
         };
       }).pipe(Effect.provide(layer));
     case "fail-closed":

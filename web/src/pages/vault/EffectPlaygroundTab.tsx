@@ -7,19 +7,19 @@ import Input from "../../components/Input";
 import SegmentedTabs from "../../components/SegmentedTabs";
 import { apiFetch } from "../../lib/api";
 import {
-  aiProviderById,
-  aiProviderOptions,
+  aiHarnessById,
+  aiHarnessOptions,
   createEffectApiSnippet,
   credentialKeysForService,
-  defaultAiProviderForVault,
+  defaultAiHarnessForVault,
   makeSandboxProxyConfig,
   proxyEnvKeys,
   redactedDisplay,
   sandboxRuntimeById,
   sandboxRuntimeOptions,
-  selectionForAiProvider,
+  selectionForAiHarness,
   serviceDisplayName,
-  type AiProviderId,
+  type AiHarnessId,
   type SandboxProxyConfig,
   type SandboxRuntimeId,
   type VaultService,
@@ -42,7 +42,7 @@ export default function EffectPlaygroundTab() {
   const [certPath, setCertPath] = useState(defaultCertPath);
   const [sandboxRuntimeId, setSandboxRuntimeId] =
     useState<SandboxRuntimeId>("sprite");
-  const [aiProviderId, setAiProviderId] = useState<AiProviderId>("openai");
+  const [aiHarnessId, setAiHarnessId] = useState<AiHarnessId>("codex");
   const [exampleId, setExampleId] = useState<PlaygroundExampleId>("inventory");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -81,12 +81,12 @@ export default function EffectPlaygroundTab() {
         const enabledServiceNames = nextServices
           .filter((service) => service.enabled !== false)
           .map(serviceDisplayName);
-        const defaultAiProviderId = defaultAiProviderForVault({
+        const defaultAiHarnessId = defaultAiHarnessForVault({
           credentialKeys: nextCredentialKeys,
           services: nextServices,
         });
-        const aiSelection = selectionForAiProvider({
-          aiProviderId: defaultAiProviderId,
+        const aiSelection = selectionForAiHarness({
+          aiHarnessId: defaultAiHarnessId,
           availableCredentialKeys: nextCredentialKeys,
           services: nextServices,
         });
@@ -108,7 +108,7 @@ export default function EffectPlaygroundTab() {
         if (!cancelled) {
           setCredentialKeys(nextCredentialKeys);
           setServices(nextServices);
-          setAiProviderId(defaultAiProviderId);
+          setAiHarnessId(defaultAiHarnessId);
           setSelectedServiceNames(defaultServiceNames);
           setSelectedCredentialKeys(referencedKeys);
         }
@@ -140,7 +140,7 @@ export default function EffectPlaygroundTab() {
             selectedCredentialKeys,
             selectedServiceNames,
             sandboxRuntimeId,
-            aiProviderId,
+            aiHarnessId,
             certPath,
           }),
         ),
@@ -152,7 +152,7 @@ export default function EffectPlaygroundTab() {
       selectedCredentialKeys,
       selectedServiceNames,
       sandboxRuntimeId,
-      aiProviderId,
+      aiHarnessId,
       certPath,
     ],
   );
@@ -173,17 +173,25 @@ export default function EffectPlaygroundTab() {
   const codeSnippet = proxyConfig ? createEffectApiSnippet(proxyConfig) : "";
   const preview = proxyConfig ? sanitizeProxyConfig(proxyConfig) : null;
   const currentSandboxRuntime = sandboxRuntimeById(sandboxRuntimeId);
-  const currentAiProvider = aiProviderById(aiProviderId);
+  const currentAiHarness = aiHarnessById(aiHarnessId);
+  const currentHarnessCredentialKeys = useMemo(
+    () =>
+      [
+        ...currentAiHarness.credentialKeys,
+        ...currentAiHarness.optionalCredentialKeys,
+      ].filter((key, index, keys) => keys.indexOf(key) === index),
+    [currentAiHarness],
+  );
   const currentAiSelection = useMemo(
     () =>
-      selectionForAiProvider({
-        aiProviderId,
+      selectionForAiHarness({
+        aiHarnessId,
         availableCredentialKeys: credentialKeys,
         services,
       }),
-    [aiProviderId, credentialKeys, services],
+    [aiHarnessId, credentialKeys, services],
   );
-  const missingAiCredentialKeys = currentAiProvider.credentialKeys.filter(
+  const missingAiCredentialKeys = currentAiHarness.credentialKeys.filter(
     (key) => !credentialKeys.includes(key),
   );
 
@@ -249,16 +257,16 @@ export default function EffectPlaygroundTab() {
     setRunOutput("");
   }
 
-  function selectAiProvider(next: AiProviderId) {
-    setAiProviderId(next);
+  function selectAiHarness(next: AiHarnessId) {
+    setAiHarnessId(next);
     setLayerOutput("");
     setRunOutput("");
     if (next === "custom") {
       return;
     }
 
-    const selection = selectionForAiProvider({
-      aiProviderId: next,
+    const selection = selectionForAiHarness({
+      aiHarnessId: next,
       availableCredentialKeys: credentialKeys,
       services,
     });
@@ -329,13 +337,13 @@ export default function EffectPlaygroundTab() {
 
                 <div>
                   <div className="text-xs font-medium text-text-muted mb-2">
-                    AI provider
+                    AI harness
                   </div>
                   <SegmentedTabs
-                    ariaLabel="AI provider"
-                    value={aiProviderId}
-                    onChange={selectAiProvider}
-                    options={aiProviderOptions.map((option) => ({
+                    ariaLabel="AI harness"
+                    value={aiHarnessId}
+                    onChange={selectAiHarness}
+                    options={aiHarnessOptions.map((option) => ({
                       value: option.id,
                       label: option.label,
                     }))}
@@ -344,37 +352,48 @@ export default function EffectPlaygroundTab() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-text">
-                          {currentAiProvider.defaultModel}
+                          {currentAiHarness.displayCommand}
                         </div>
                         <div className="mt-1 text-xs text-text-muted leading-relaxed">
-                          {currentAiProvider.description}
+                          {currentAiHarness.description}
                         </div>
                       </div>
                       <span className="shrink-0 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-mono text-text-muted">
-                        {currentAiProvider.id}
+                        {currentAiHarness.id}
                       </span>
                     </div>
+                    <div className="mt-3 text-[11px] font-mono text-text-muted break-all">
+                      {currentAiHarness.packageName}@{currentAiHarness.packageVersion}
+                    </div>
                     <div className="mt-3 text-[11px] font-mono text-text-dim break-all">
-                      {currentAiProvider.requestUrl}
+                      {currentAiHarness.requestUrl}
+                    </div>
+                    <div className="mt-3 space-y-1.5 text-[11px] font-mono text-text-dim">
+                      <div className="break-all">install: {currentAiHarness.installScript}</div>
+                      <div className="break-all">run: {currentAiHarness.runScript}</div>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-1.5">
-                      {currentAiProvider.credentialKeys.length === 0 ? (
+                      {currentHarnessCredentialKeys.length === 0 ? (
                         <span className="px-2 py-1 rounded-md border border-border bg-surface text-[11px] text-text-muted">
                           manual credentials
                         </span>
                       ) : (
-                        currentAiProvider.credentialKeys.map((key) => {
+                        currentHarnessCredentialKeys.map((key) => {
                           const available = credentialKeys.includes(key);
+                          const required = currentAiHarness.credentialKeys.includes(key);
                           return (
                             <span
                               key={key}
                               className={`px-2 py-1 rounded-md border text-[11px] font-mono ${
                                 available
                                   ? "border-success/20 bg-success-bg text-success"
-                                  : "border-danger/20 bg-danger-bg text-danger"
+                                  : required
+                                    ? "border-danger/20 bg-danger-bg text-danger"
+                                    : "border-border bg-surface text-text-muted"
                               }`}
                             >
                               {key}
+                              {!required ? " optional" : ""}
                             </span>
                           );
                         })
@@ -669,17 +688,20 @@ function runGeneratedLayerPreview(
           label: config.sandboxRuntime.label,
           launchTarget: config.sandboxRuntime.launchTarget,
         },
-        aiProvider: {
-          id: config.aiProvider.id,
-          label: config.aiProvider.label,
-          model: config.aiProvider.defaultModel,
-          requestUrl: config.aiProvider.requestUrl,
+        aiHarness: {
+          id: config.aiHarness.id,
+          label: config.aiHarness.label,
+          packageName: config.aiHarness.packageName,
+          packageVersion: config.aiHarness.packageVersion,
+          displayCommand: config.aiHarness.displayCommand,
+          installScript: config.aiHarness.installScript,
+          runScript: config.aiHarness.runScript,
+          requestUrl: config.aiHarness.requestUrl,
         },
         expiresAt: session.expires_at ?? "<server default>",
         certPath: config.certPath,
         session: {
           token: "<redacted>",
-          address: session.av_addr || window.location.origin,
         },
         mitm: {
           port: mitmPort,
@@ -693,6 +715,17 @@ function runGeneratedLayerPreview(
             caEnvKeys.includes(key) ? config.certPath : "<redacted>",
           ]),
         ),
+        installPhase: {
+          command: config.aiHarness.installScript,
+          proxyEnvKeys: proxyEnvKeys,
+          sentinelEnvKeys: [],
+        },
+        runPhase: {
+          command: config.aiHarness.runScript,
+          harnessEnvKeys: Object.keys(config.aiHarness.env),
+          proxyEnvKeys: proxyEnvKeys,
+          sentinelEnvKeys: Object.keys(config.sentinelEnv),
+        },
         selectedServices: config.selectedServices.map((service) => ({
           name: service.name,
           host: service.host,
@@ -702,6 +735,7 @@ function runGeneratedLayerPreview(
         notes: [
           "Minted a real short-lived proxy session.",
           "The session token, proxy URL, and CA PEM were redacted from this output.",
+          "The harness is installed and run inside the sandbox with proxy env; only the run phase receives sentinel API-key env.",
           "serviceNames and credentialKeys are launcher metadata until Agent Vault adds server-enforced session allowlists.",
         ],
       };
@@ -749,17 +783,20 @@ interface GeneratedLayerRunOutput {
     readonly label: string;
     readonly launchTarget: string;
   };
-  readonly aiProvider: {
+  readonly aiHarness: {
     readonly id: string;
     readonly label: string;
-    readonly model: string;
+    readonly packageName: string;
+    readonly packageVersion: string;
+    readonly displayCommand: string;
+    readonly installScript: string;
+    readonly runScript: string;
     readonly requestUrl: string;
   };
   readonly expiresAt: string;
   readonly certPath: string;
   readonly session: {
     readonly token: "<redacted>";
-    readonly address: string;
   };
   readonly mitm: {
     readonly port: string;
@@ -768,6 +805,17 @@ interface GeneratedLayerRunOutput {
     readonly caCertificateBytes: number;
   };
   readonly proxyEnv: Record<string, string>;
+  readonly installPhase: {
+    readonly command: string;
+    readonly proxyEnvKeys: ReadonlyArray<string>;
+    readonly sentinelEnvKeys: ReadonlyArray<string>;
+  };
+  readonly runPhase: {
+    readonly command: string;
+    readonly harnessEnvKeys: ReadonlyArray<string>;
+    readonly proxyEnvKeys: ReadonlyArray<string>;
+    readonly sentinelEnvKeys: ReadonlyArray<string>;
+  };
   readonly selectedServices: ReadonlyArray<{
     readonly name: string;
     readonly host: string;
@@ -811,11 +859,15 @@ function sanitizeProxyConfig(config: SandboxProxyConfig) {
       label: config.sandboxRuntime.label,
       launchTarget: config.sandboxRuntime.launchTarget,
     },
-    aiProvider: {
-      id: config.aiProvider.id,
-      label: config.aiProvider.label,
-      model: config.aiProvider.defaultModel,
-      requestUrl: config.aiProvider.requestUrl,
+    aiHarness: {
+      id: config.aiHarness.id,
+      label: config.aiHarness.label,
+      packageName: config.aiHarness.packageName,
+      packageVersion: config.aiHarness.packageVersion,
+      displayCommand: config.aiHarness.displayCommand,
+      installScript: config.aiHarness.installScript,
+      runScript: config.aiHarness.runScript,
+      requestUrl: config.aiHarness.requestUrl,
     },
     certPath: config.certPath,
     selectedCredentialKeys: config.selectedCredentialKeys,

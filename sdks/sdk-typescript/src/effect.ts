@@ -19,27 +19,44 @@ export interface AgentVaultSessionClient {
   };
 }
 
-export interface AgentVaultSandboxTarget {
+export interface AgentVaultSandboxTargetConfig {
   readonly id: string;
   readonly label?: string;
   readonly launchTarget?: string;
   readonly certPath?: string;
 }
 
-export interface AgentVaultAiTarget {
-  readonly provider: string;
+export interface AgentVaultAiHarnessConfig {
+  readonly id: string;
   readonly label?: string;
-  readonly model?: string;
+  readonly packageName?: string;
+  readonly packageVersion?: string;
+  readonly installScript?: string;
+  readonly runScript?: string;
+  readonly displayCommand?: string;
+  readonly prompt?: string;
+  readonly env?: Record<string, string>;
   readonly requestUrl?: string;
   readonly credentialKeys?: ReadonlyArray<string>;
   readonly serviceNames?: ReadonlyArray<string>;
+  readonly serviceHosts?: ReadonlyArray<string>;
 }
 
 export interface AgentVaultSandboxProxyOptions extends AgentVaultConfig {
   readonly vault: string;
   readonly certPath: string;
-  readonly sandbox?: AgentVaultSandboxTarget;
-  readonly ai?: AgentVaultAiTarget;
+  readonly sandbox?: AgentVaultSandboxTargetConfig;
+  readonly aiHarness?: AgentVaultAiHarnessConfig;
+  readonly ttlSeconds?: number;
+  readonly label?: string;
+  readonly credentialKeys?: ReadonlyArray<string>;
+  readonly serviceNames?: ReadonlyArray<string>;
+  readonly client?: AgentVaultSessionClient;
+}
+
+export interface AgentVaultSandboxProxyLayerOptions extends AgentVaultConfig {
+  readonly vault: string;
+  readonly certPath?: string;
   readonly ttlSeconds?: number;
   readonly label?: string;
   readonly credentialKeys?: ReadonlyArray<string>;
@@ -51,8 +68,8 @@ export interface PreparedSandboxProxy {
   readonly vault: string;
   readonly expiresAt: string;
   readonly certPath: string;
-  readonly sandbox?: AgentVaultSandboxTarget;
-  readonly ai?: AgentVaultAiTarget;
+  readonly sandbox?: AgentVaultSandboxTargetConfig;
+  readonly aiHarness?: AgentVaultAiHarnessConfig;
   readonly credentialKeys: ReadonlyArray<string>;
   readonly serviceNames: ReadonlyArray<string>;
   readonly env: Record<string, Redacted.Redacted<string>>;
@@ -67,6 +84,22 @@ export class AgentVaultSandboxProxyError extends Data.TaggedError(
   readonly cause?: unknown;
 }> {}
 
+export class AgentVaultSandboxTarget extends Context.Tag(
+  "@infisical/agent-vault-sdk/AgentVaultSandboxTarget",
+)<AgentVaultSandboxTarget, AgentVaultSandboxTargetConfig>() {
+  static layer(target: AgentVaultSandboxTargetConfig) {
+    return Layer.succeed(AgentVaultSandboxTarget, target);
+  }
+}
+
+export class AgentVaultAiHarness extends Context.Tag(
+  "@infisical/agent-vault-sdk/AgentVaultAiHarness",
+)<AgentVaultAiHarness, AgentVaultAiHarnessConfig>() {
+  static layer(harness: AgentVaultAiHarnessConfig) {
+    return Layer.succeed(AgentVaultAiHarness, harness);
+  }
+}
+
 export class AgentVaultSandboxProxy extends Context.Tag(
   "@infisical/agent-vault-sdk/AgentVaultSandboxProxy",
 )<AgentVaultSandboxProxy, AgentVaultSandboxProxy.Service>() {
@@ -74,6 +107,26 @@ export class AgentVaultSandboxProxy extends Context.Tag(
     return Layer.succeed(AgentVaultSandboxProxy, {
       prepareForSandbox: prepareForSandbox(options),
     });
+  }
+
+  static layerFromTargets(options: AgentVaultSandboxProxyLayerOptions) {
+    return Layer.effect(
+      AgentVaultSandboxProxy,
+      Effect.gen(function* () {
+        const sandbox = yield* AgentVaultSandboxTarget;
+        const aiHarness = yield* AgentVaultAiHarness;
+        return {
+          prepareForSandbox: prepareForSandbox({
+            ...options,
+            certPath: options.certPath ?? sandbox.certPath ?? "",
+            sandbox,
+            aiHarness,
+            credentialKeys: options.credentialKeys ?? aiHarness.credentialKeys,
+            serviceNames: options.serviceNames ?? aiHarness.serviceNames,
+          }),
+        };
+      }),
+    );
   }
 
   static unsafeMaterializeEnv = unsafeMaterializeEnv;
@@ -133,7 +186,7 @@ export function prepareForSandbox(
         expiresAt: session.expiresAt,
         certPath: options.certPath,
         sandbox: options.sandbox,
-        ai: options.ai,
+        aiHarness: options.aiHarness,
         credentialKeys,
         serviceNames: unique(options.serviceNames ?? []),
         env: redactRecord(env),
