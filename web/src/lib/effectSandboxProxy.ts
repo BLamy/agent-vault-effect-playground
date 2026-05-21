@@ -286,9 +286,9 @@ export function layerSandboxProxy(config: SandboxProxyConfig) {
 }
 
 export function composeSandboxProxyLayers(config: SandboxProxyConfig) {
+  const ProxyLayer = layerSandboxProxy(config);
   const SandboxLayer = layerSandboxTarget(config);
   const HarnessLayer = layerAiHarness(config);
-  const ProxyLayer = layerSandboxProxy(config);
 
   return ProxyLayer.pipe(Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer)));
 }
@@ -521,8 +521,6 @@ export function createEffectApiSnippet(config: SandboxProxyConfig): string {
 } from "@infisical/agent-vault-sdk/effect";
 import { Effect, Layer } from "effect";
 
-const SandboxLayer = AgentVaultSandboxTarget.layer(${sandbox});
-const HarnessLayer = AgentVaultAiHarness.layer(${aiHarness});
 const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
   address: process.env.AGENT_VAULT_ADDR!,
   token: process.env.AGENT_VAULT_TOKEN!,
@@ -533,9 +531,27 @@ const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
   serviceNames: ${serviceNames},
   serviceHosts: ${serviceHosts}
 });
+const SandboxLayer = AgentVaultSandboxTarget.layer(${sandbox});
+const HarnessLayer = AgentVaultAiHarness.layer(${aiHarness});
 const AppLayer = ProxyLayer.pipe(
   Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer))
 );
+
+const startInteractiveAgentPty = (options: {
+  readonly target: string;
+  readonly command: string;
+  readonly env: Record<string, string>;
+}) =>
+  // Replace this with the selected sandbox adapter's PTY API.
+  Effect.succeed({
+    id: \`agent-pty:\${options.target}\`,
+    target: options.target,
+    command: options.command,
+    stdin: "interactive" as const,
+    stdout: "stream" as const,
+    stderr: "stream" as const,
+    envKeys: Object.keys(options.env)
+  });
 
 const program = Effect.gen(function* () {
   const sandbox = yield* AgentVaultSandboxTarget;
@@ -553,8 +569,14 @@ const program = Effect.gen(function* () {
   // In the sandbox adapter:
   // 1. write caCertificate to prepared.certPath
   // 2. install the harness package inside the sandbox with proxyEnv, but without sentinel keys
-  // 3. run harness.runScript inside the sandbox with runEnv
+  // 3. start the agent harness as an interactive PTY with runEnv
   // Every HTTP client used by the harness now sees HTTP(S)_PROXY and the CA bundle.
+  const agentPty = yield* startInteractiveAgentPty({
+    target: sandbox.launchTarget ?? sandbox.id,
+    command: harness.runScript ?? "",
+    env: runEnv
+  });
+
   return {
     sandbox,
     harness: {
@@ -572,6 +594,7 @@ const program = Effect.gen(function* () {
       proxyEnvKeys: Object.keys(proxyEnv),
       sentinelEnvKeys: Object.keys(prepared.sentinelEnv)
     },
+    agentPty,
     caCertificateBytes: caCertificate.length,
     credentialKeys: prepared.credentialKeys
   };

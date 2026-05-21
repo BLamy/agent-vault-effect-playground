@@ -154,6 +154,13 @@ describe("AgentVaultSandboxProxy", () => {
         },
       }),
     };
+    const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
+      client,
+      vault: "default",
+      credentialKeys: ["ANTHROPIC_API_KEY"],
+      serviceNames: ["anthropic"],
+      serviceHosts: ["api.anthropic.com"],
+    });
     const SandboxLayer = AgentVaultSandboxTarget.layer({
       id: "almostnode",
       label: "AlmostNode",
@@ -168,13 +175,6 @@ describe("AgentVaultSandboxProxy", () => {
       installScript: "npm install -g @anthropic-ai/claude-code@latest",
       runScript: "claude -p \"$AGENT_PROMPT\"",
       requestUrl: "https://api.anthropic.com/v1/messages",
-    });
-    const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
-      client,
-      vault: "default",
-      credentialKeys: ["ANTHROPIC_API_KEY"],
-      serviceNames: ["anthropic"],
-      serviceHosts: ["api.anthropic.com"],
     });
     const AppLayer = ProxyLayer.pipe(
       Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer)),

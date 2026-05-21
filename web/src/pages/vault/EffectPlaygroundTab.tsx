@@ -737,6 +737,19 @@ function runGeneratedLayerPreview(
           proxyEnvKeys: proxyEnvKeys,
           sentinelEnvKeys: Object.keys(config.sentinelEnv),
         },
+        agentPty: {
+          id: `agent-pty:${config.sandboxRuntime.id}:${config.aiHarness.id}`,
+          target: config.sandboxRuntime.launchTarget,
+          command: config.aiHarness.runScript,
+          stdin: "interactive",
+          stdout: "stream",
+          stderr: "stream",
+          envKeys: [
+            ...Object.keys(config.aiHarness.env),
+            ...proxyEnvKeys,
+            ...Object.keys(config.sentinelEnv),
+          ],
+        },
         selectedServices: config.selectedServices.map((service) => ({
           name: service.name,
           host: service.host,
@@ -747,6 +760,7 @@ function runGeneratedLayerPreview(
           "Minted a real short-lived proxy session.",
           "The session token, proxy URL, and CA PEM were redacted from this output.",
           "The harness is installed and run inside the sandbox with proxy env; only the run phase receives sentinel API-key env.",
+          "The agent run is represented as an interactive PTY handle; the selected sandbox adapter owns the real PTY process.",
           "serviceNames and credentialKeys are launcher metadata until Agent Vault adds server-enforced session allowlists.",
         ],
       };
@@ -831,6 +845,15 @@ interface GeneratedLayerRunOutput {
     readonly harnessEnvKeys: ReadonlyArray<string>;
     readonly proxyEnvKeys: ReadonlyArray<string>;
     readonly sentinelEnvKeys: ReadonlyArray<string>;
+  };
+  readonly agentPty: {
+    readonly id: string;
+    readonly target: string;
+    readonly command: string;
+    readonly stdin: "interactive";
+    readonly stdout: "stream";
+    readonly stderr: "stream";
+    readonly envKeys: ReadonlyArray<string>;
   };
   readonly selectedServices: ReadonlyArray<{
     readonly name: string;
