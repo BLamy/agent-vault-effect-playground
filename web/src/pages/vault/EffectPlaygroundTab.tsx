@@ -728,7 +728,7 @@ function runGeneratedLayerPreview(
         },
         installPhase: {
           command: config.aiHarness.installScript,
-          proxyEnvKeys: proxyEnvKeys,
+          proxyEnvKeys: [],
           sentinelEnvKeys: [],
         },
         runPhase: {
@@ -759,8 +759,8 @@ function runGeneratedLayerPreview(
         notes: [
           "Minted a real short-lived proxy session.",
           "The session token, proxy URL, and CA PEM were redacted from this output.",
-          "The harness is installed and run inside the sandbox with proxy env; only the run phase receives sentinel API-key env.",
-          "The agent run is represented as an interactive PTY handle; the selected sandbox adapter owns the real PTY process.",
+          "The harness is installed inside the sandbox without proxy or sentinel env.",
+          "The sandbox layer starts the agent as an interactive PTY; the run phase receives proxy and sentinel API-key env.",
           "serviceNames and credentialKeys are launcher metadata until Agent Vault adds server-enforced session allowlists.",
         ],
       };

@@ -26,6 +26,47 @@ export interface AgentVaultSandboxTargetConfig {
   readonly certPath?: string;
 }
 
+export interface AgentVaultSandboxPtyOptions {
+  readonly command: string;
+  readonly env: Record<string, string>;
+  readonly cwd?: string;
+  readonly cols?: number;
+  readonly rows?: number;
+}
+
+export interface AgentVaultSandboxPty {
+  readonly id: string;
+  readonly target: string;
+  readonly command: string;
+  readonly stdin: "interactive";
+  readonly stdout: "stream";
+  readonly stderr: "stream";
+  readonly envKeys: ReadonlyArray<string>;
+  readonly sessionId?: string;
+  readonly terminalUrl?: string;
+}
+
+export class AgentVaultSandboxTargetError extends Data.TaggedError(
+  "AgentVaultSandboxTargetError",
+)<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+export interface AgentVaultSandboxTargetLayerOptions
+  extends AgentVaultSandboxTargetConfig {
+  readonly startInteractivePty?: (
+    options: AgentVaultSandboxPtyOptions,
+  ) => Effect.Effect<AgentVaultSandboxPty, AgentVaultSandboxTargetError>;
+}
+
+export interface AgentVaultSandboxTargetService
+  extends AgentVaultSandboxTargetConfig {
+  readonly startInteractivePty: (
+    options: AgentVaultSandboxPtyOptions,
+  ) => Effect.Effect<AgentVaultSandboxPty, AgentVaultSandboxTargetError>;
+}
+
 export interface AgentVaultAiHarnessConfig {
   readonly id: string;
   readonly label?: string;
@@ -86,9 +127,19 @@ export class AgentVaultSandboxProxyError extends Data.TaggedError(
 
 export class AgentVaultSandboxTarget extends Context.Tag(
   "@infisical/agent-vault-sdk/AgentVaultSandboxTarget",
-)<AgentVaultSandboxTarget, AgentVaultSandboxTargetConfig>() {
-  static layer(target: AgentVaultSandboxTargetConfig) {
-    return Layer.succeed(AgentVaultSandboxTarget, target);
+)<AgentVaultSandboxTarget, AgentVaultSandboxTargetService>() {
+  static layer(target: AgentVaultSandboxTargetLayerOptions) {
+    return Layer.succeed(AgentVaultSandboxTarget, {
+      ...target,
+      startInteractivePty:
+        target.startInteractivePty ??
+        (() =>
+          Effect.fail(
+            new AgentVaultSandboxTargetError({
+              message: "Sandbox layer does not provide an interactive PTY adapter",
+            }),
+          )),
+    });
   }
 }
 

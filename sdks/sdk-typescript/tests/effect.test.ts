@@ -166,6 +166,16 @@ describe("AgentVaultSandboxProxy", () => {
       label: "AlmostNode",
       launchTarget: "AlmostNode worker command",
       certPath: "/home/sandbox/.agent-vault/ca.pem",
+      startInteractivePty: options =>
+        Effect.succeed({
+          id: "pty-123",
+          target: "AlmostNode worker command",
+          command: options.command,
+          stdin: "interactive",
+          stdout: "stream",
+          stderr: "stream",
+          envKeys: Object.keys(options.env),
+        }),
     });
     const HarnessLayer = AgentVaultAiHarness.layer({
       id: "claude",
@@ -185,7 +195,15 @@ describe("AgentVaultSandboxProxy", () => {
       const aiHarness = yield* AgentVaultAiHarness;
       const proxy = yield* AgentVaultSandboxProxy;
       const prepared = yield* proxy.prepareForSandbox;
-      return { sandbox, aiHarness, prepared };
+      const agentPty = yield* sandbox.startInteractivePty({
+        command: aiHarness.runScript ?? "",
+        env: {
+          CI: "1",
+          ...AgentVaultSandboxProxy.unsafeMaterializeEnv(prepared),
+          ...prepared.sentinelEnv,
+        },
+      });
+      return { sandbox, aiHarness, prepared, agentPty };
     }).pipe(Effect.provide(AppLayer));
 
     const result = await Effect.runPromise(program);
@@ -195,5 +213,13 @@ describe("AgentVaultSandboxProxy", () => {
     expect(result.prepared.credentialKeys).toEqual(["ANTHROPIC_API_KEY"]);
     expect(result.prepared.serviceNames).toEqual(["anthropic"]);
     expect(result.prepared.serviceHosts).toEqual(["api.anthropic.com"]);
+    expect(result.agentPty).toMatchObject({
+      id: "pty-123",
+      stdin: "interactive",
+      command: "claude -p \"$AGENT_PROMPT\"",
+    });
+    expect(result.agentPty.envKeys).toEqual(
+      expect.arrayContaining(["ANTHROPIC_API_KEY", "HTTPS_PROXY"]),
+    );
   });
 });

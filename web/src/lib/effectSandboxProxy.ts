@@ -36,6 +36,34 @@ export interface SandboxRuntimeOption {
   readonly launchTarget: string;
 }
 
+export interface SandboxPtyOptions {
+  readonly command: string;
+  readonly env: Record<string, string>;
+  readonly cwd?: string;
+  readonly cols?: number;
+  readonly rows?: number;
+}
+
+export interface SandboxPtyHandle {
+  readonly id: string;
+  readonly target: string;
+  readonly command: string;
+  readonly stdin: "interactive";
+  readonly stdout: "stream";
+  readonly stderr: "stream";
+  readonly envKeys: ReadonlyArray<string>;
+  readonly cols?: number;
+  readonly rows?: number;
+  readonly sessionId?: string;
+  readonly terminalUrl?: string;
+}
+
+export interface SandboxRuntimeService extends SandboxRuntimeOption {
+  readonly startInteractivePty: (
+    options: SandboxPtyOptions,
+  ) => Effect.Effect<SandboxPtyHandle, SandboxProxyConfigError>;
+}
+
 export type AiHarnessId = "codex" | "claude" | "opencode" | "gemini" | "custom";
 
 export interface AiHarnessOption {
@@ -83,9 +111,23 @@ export class AgentVaultSandboxProxy extends Context.Tag(
 
 export class AgentVaultSandboxTarget extends Context.Tag(
   "AgentVaultSandboxTarget",
-)<AgentVaultSandboxTarget, SandboxRuntimeOption>() {
+)<AgentVaultSandboxTarget, SandboxRuntimeService>() {
   static layer(target: SandboxRuntimeOption) {
-    return Layer.succeed(AgentVaultSandboxTarget, target);
+    return Layer.succeed(AgentVaultSandboxTarget, {
+      ...target,
+      startInteractivePty: (options) =>
+        Effect.succeed({
+          id: `agent-pty:${target.id}`,
+          target: target.launchTarget,
+          command: options.command,
+          stdin: "interactive",
+          stdout: "stream",
+          stderr: "stream",
+          envKeys: Object.keys(options.env),
+          cols: options.cols,
+          rows: options.rows,
+        }),
+    });
   }
 }
 
@@ -519,7 +561,19 @@ export function createEffectApiSnippet(config: SandboxProxyConfig): string {
   AgentVaultSandboxProxy,
   AgentVaultSandboxTarget
 } from "@infisical/agent-vault-sdk/effect";
+import { SpriteContext, SpriteTerminal } from "@replayio/effect-platform-sprites";
 import { Effect, Layer } from "effect";
+
+const spriteContext = new SpriteContext(process.env.SPRITE_NAME ?? "agent-vault-effect-playground", undefined, {
+  createIfMissing: true,
+  namePrefix: "agent-vault-effect-playground",
+  token: process.env.SPRITES_TOKEN!
+});
+const SpriteLayer = Layer.unwrapEffect(
+  Effect.map(spriteContext.resolveSprite(), (sprite) =>
+    SpriteTerminal.layer(sprite, { terminal: { cols: 100, rows: 30 } })
+  )
+);
 
 const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
   address: process.env.AGENT_VAULT_ADDR!,
@@ -531,27 +585,46 @@ const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
   serviceNames: ${serviceNames},
   serviceHosts: ${serviceHosts}
 });
-const SandboxLayer = AgentVaultSandboxTarget.layer(${sandbox});
+const SandboxLayer = Layer.effect(
+  AgentVaultSandboxTarget,
+  Effect.gen(function* () {
+    const terminal = yield* SpriteTerminal.Tag;
+    const sandboxTarget = ${sandbox};
+
+    return {
+      ...sandboxTarget,
+      startInteractivePty: (options: {
+        readonly command: string;
+        readonly env: Record<string, string>;
+        readonly cwd?: string;
+        readonly cols?: number;
+        readonly rows?: number;
+      }) =>
+        terminal.create({
+          command: "/bin/sh",
+          args: ["-lc", options.command],
+          cols: options.cols ?? 100,
+          rows: options.rows ?? 30
+        }).pipe(
+          Effect.map((tty) => ({
+            id: tty.sessionId ?? "agent-pty:" + sandboxTarget.id,
+            target: sandboxTarget.launchTarget ?? sandboxTarget.id,
+            command: options.command,
+            stdin: "interactive" as const,
+            stdout: "stream" as const,
+            stderr: "stream" as const,
+            envKeys: Object.keys(options.env),
+            sessionId: tty.sessionId
+          }))
+        )
+    };
+  })
+);
 const HarnessLayer = AgentVaultAiHarness.layer(${aiHarness});
 const AppLayer = ProxyLayer.pipe(
-  Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer))
+  Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer)),
+  Layer.provide(SpriteLayer)
 );
-
-const startInteractiveAgentPty = (options: {
-  readonly target: string;
-  readonly command: string;
-  readonly env: Record<string, string>;
-}) =>
-  // Replace this with the selected sandbox adapter's PTY API.
-  Effect.succeed({
-    id: \`agent-pty:\${options.target}\`,
-    target: options.target,
-    command: options.command,
-    stdin: "interactive" as const,
-    stdout: "stream" as const,
-    stderr: "stream" as const,
-    envKeys: Object.keys(options.env)
-  });
 
 const program = Effect.gen(function* () {
   const sandbox = yield* AgentVaultSandboxTarget;
@@ -568,13 +641,14 @@ const program = Effect.gen(function* () {
 
   // In the sandbox adapter:
   // 1. write caCertificate to prepared.certPath
-  // 2. install the harness package inside the sandbox with proxyEnv, but without sentinel keys
-  // 3. start the agent harness as an interactive PTY with runEnv
+  // 2. install the harness package inside the sandbox without proxy or sentinel keys
+  // 3. start the agent harness through the sandbox layer's interactive PTY
   // Every HTTP client used by the harness now sees HTTP(S)_PROXY and the CA bundle.
-  const agentPty = yield* startInteractiveAgentPty({
-    target: sandbox.launchTarget ?? sandbox.id,
+  const agentPty = yield* sandbox.startInteractivePty({
     command: harness.runScript ?? "",
-    env: runEnv
+    env: runEnv,
+    cols: 100,
+    rows: 30
   });
 
   return {
@@ -586,7 +660,8 @@ const program = Effect.gen(function* () {
     },
     installPhase: {
       command: harness.installScript,
-      proxyEnvKeys: Object.keys(proxyEnv)
+      envKeys: Object.keys(harness.env),
+      proxyEnvKeys: []
     },
     runPhase: {
       command: harness.runScript,

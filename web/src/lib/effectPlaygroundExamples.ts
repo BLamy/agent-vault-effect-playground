@@ -71,6 +71,7 @@ const program = Effect.gen(function* () {
     code: `const AppLayer = composeSandboxProxyLayers(config);
 
 const program = Effect.gen(function* () {
+  const sandbox = yield* AgentVaultSandboxTarget;
   const harness = yield* AgentVaultAiHarness;
   const proxy = yield* AgentVaultSandboxProxy;
   const apiKey = proxy.selectedCredentialKeys[0];
@@ -81,11 +82,25 @@ const program = Effect.gen(function* () {
     );
   }
 
+  const runEnv = {
+    ...harness.env,
+    ...Object.fromEntries(
+      Object.keys(proxy.proxyEnv).map((key) => [key, "<redacted>"])
+    ),
+    ...proxy.sentinelEnv
+  };
+  const agentPty = yield* sandbox.startInteractivePty({
+    command: harness.runScript,
+    env: runEnv,
+    cols: 100,
+    rows: 30
+  });
+
   return {
     harness: harness.label,
     installPhase: {
       command: harness.installScript,
-      proxyEnvKeys: Object.keys(proxy.proxyEnv),
+      proxyEnvKeys: [],
       sentinelEnvKeys: []
     },
     runPhase: {
@@ -93,7 +108,8 @@ const program = Effect.gen(function* () {
       proxyEnvKeys: Object.keys(proxy.proxyEnv),
       sentinelEnvKeys: Object.keys(proxy.sentinelEnv)
     },
-    interceptedHosts: proxy.selectedServices.map((service) => service.host)
+    interceptedHosts: proxy.selectedServices.map((service) => service.host),
+    agentPty
   };
 }).pipe(Effect.provide(AppLayer));`,
   },
@@ -175,6 +191,7 @@ export function runPlaygroundExample(
       }).pipe(Effect.provide(layer));
     case "harness-run":
       return Effect.gen(function* () {
+        const sandbox = yield* AgentVaultSandboxTarget;
         const harness = yield* AgentVaultAiHarness;
         const proxy = yield* AgentVaultSandboxProxy;
         const apiKey = proxy.selectedCredentialKeys[0];
@@ -186,6 +203,20 @@ export function runPlaygroundExample(
           );
         }
 
+        const runEnv = {
+          ...harness.env,
+          ...Object.fromEntries(
+            Object.keys(proxy.proxyEnv).map((key) => [key, redactedDisplay(proxy.proxyEnv[key])]),
+          ),
+          ...proxy.sentinelEnv,
+        };
+        const agentPty = yield* sandbox.startInteractivePty({
+          command: harness.runScript,
+          env: runEnv,
+          cols: 100,
+          rows: 30,
+        });
+
         return {
           harness: {
             id: harness.id,
@@ -195,7 +226,7 @@ export function runPlaygroundExample(
           },
           installPhase: {
             command: harness.installScript,
-            proxyEnvKeys: Object.keys(proxy.proxyEnv),
+            proxyEnvKeys: [],
             sentinelEnvKeys: [],
           },
           runPhase: {
@@ -205,6 +236,7 @@ export function runPlaygroundExample(
             sentinelEnvKeys: Object.keys(proxy.sentinelEnv),
           },
           interceptedHosts: proxy.selectedServices.map((service) => service.host),
+          agentPty,
           result: "The sandbox runs the harness normally; HTTP(S)_PROXY and CA env route outbound API calls through Agent Vault.",
         };
       }).pipe(Effect.provide(layer));
