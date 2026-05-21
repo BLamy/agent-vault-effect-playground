@@ -49,10 +49,13 @@ export interface AiHarnessOption {
   readonly displayCommand: string;
   readonly prompt: string;
   readonly env: Record<string, string>;
+  readonly requestUrl: string;
+}
+
+export interface AiHarnessProxyDefaults {
   readonly credentialKeys: ReadonlyArray<string>;
   readonly optionalCredentialKeys: ReadonlyArray<string>;
   readonly serviceHosts: ReadonlyArray<string>;
-  readonly requestUrl: string;
 }
 
 export interface SandboxProxyConfig {
@@ -147,9 +150,6 @@ export const aiHarnessOptions = [
       CI: "1",
       NO_COLOR: "1",
     },
-    credentialKeys: ["OPENAI_API_KEY"],
-    optionalCredentialKeys: [],
-    serviceHosts: ["api.openai.com"],
     requestUrl: "https://api.openai.com/v1/responses",
   },
   {
@@ -167,9 +167,6 @@ export const aiHarnessOptions = [
       CI: "1",
       NO_COLOR: "1",
     },
-    credentialKeys: ["ANTHROPIC_API_KEY"],
-    optionalCredentialKeys: [],
-    serviceHosts: ["api.anthropic.com"],
     requestUrl: "https://api.anthropic.com/v1/messages",
   },
   {
@@ -188,21 +185,6 @@ export const aiHarnessOptions = [
       NO_COLOR: "1",
       OPENCODE_DISABLE_AUTOUPDATE: "1",
     },
-    credentialKeys: [],
-    optionalCredentialKeys: [
-      "ANTHROPIC_API_KEY",
-      "OPENAI_API_KEY",
-      "OPENROUTER_API_KEY",
-      "GEMINI_API_KEY",
-      "GOOGLE_API_KEY",
-    ],
-    serviceHosts: [
-      "api.anthropic.com",
-      "api.openai.com",
-      "openrouter.ai",
-      "api.openrouter.ai",
-      "generativelanguage.googleapis.com",
-    ],
     requestUrl: "provider-selected-by-harness",
   },
   {
@@ -220,9 +202,6 @@ export const aiHarnessOptions = [
       CI: "1",
       NO_COLOR: "1",
     },
-    credentialKeys: [],
-    optionalCredentialKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    serviceHosts: ["generativelanguage.googleapis.com", "aiplatform.googleapis.com"],
     requestUrl: "https://generativelanguage.googleapis.com",
   },
   {
@@ -236,12 +215,49 @@ export const aiHarnessOptions = [
     displayCommand: "custom harness",
     prompt: "configured-by-agent",
     env: {},
-    credentialKeys: [],
-    optionalCredentialKeys: [],
-    serviceHosts: [],
     requestUrl: "configured-by-agent",
   },
 ] as const satisfies ReadonlyArray<AiHarnessOption>;
+
+export const aiHarnessProxyDefaults = {
+  codex: {
+    credentialKeys: ["OPENAI_API_KEY"],
+    optionalCredentialKeys: [],
+    serviceHosts: ["api.openai.com"],
+  },
+  claude: {
+    credentialKeys: ["ANTHROPIC_API_KEY"],
+    optionalCredentialKeys: [],
+    serviceHosts: ["api.anthropic.com"],
+  },
+  opencode: {
+    credentialKeys: [],
+    optionalCredentialKeys: [
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
+      "OPENROUTER_API_KEY",
+      "GEMINI_API_KEY",
+      "GOOGLE_API_KEY",
+    ],
+    serviceHosts: [
+      "api.anthropic.com",
+      "api.openai.com",
+      "openrouter.ai",
+      "api.openrouter.ai",
+      "generativelanguage.googleapis.com",
+    ],
+  },
+  gemini: {
+    credentialKeys: [],
+    optionalCredentialKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    serviceHosts: ["generativelanguage.googleapis.com", "aiplatform.googleapis.com"],
+  },
+  custom: {
+    credentialKeys: [],
+    optionalCredentialKeys: [],
+    serviceHosts: [],
+  },
+} as const satisfies Record<AiHarnessId, AiHarnessProxyDefaults>;
 
 const credentialPattern = /\{\{\s*([A-Z][A-Z0-9_]*)\s*\}\}/g;
 
@@ -330,6 +346,10 @@ export function aiHarnessById(id: AiHarnessId): AiHarnessOption {
   return aiHarnessOptions.find((option) => option.id === id) ?? aiHarnessOptions[0];
 }
 
+export function proxyDefaultsForAiHarness(id: AiHarnessId): AiHarnessProxyDefaults {
+  return aiHarnessProxyDefaults[id] ?? aiHarnessProxyDefaults.custom;
+}
+
 export function defaultAiHarnessForVault(input: {
   readonly credentialKeys: ReadonlyArray<string>;
   readonly services: ReadonlyArray<VaultService>;
@@ -338,14 +358,18 @@ export function defaultAiHarnessForVault(input: {
 
   return (
     aiHarnessOptions.find(
-      (harness) =>
-        harness.id !== "custom" &&
-        ([...harness.credentialKeys, ...harness.optionalCredentialKeys].some(
-          (key) => keys.has(key),
-        ) ||
-          input.services.some((service) =>
-            serviceHostMatches(service.host, harness.serviceHosts),
-          )),
+      (harness) => {
+        const proxyDefaults = proxyDefaultsForAiHarness(harness.id);
+        return (
+          harness.id !== "custom" &&
+          ([...proxyDefaults.credentialKeys, ...proxyDefaults.optionalCredentialKeys].some(
+            (key) => keys.has(key),
+          ) ||
+            input.services.some((service) =>
+              serviceHostMatches(service.host, proxyDefaults.serviceHosts),
+            ))
+        );
+      },
     )?.id ?? "custom"
   );
 }
@@ -363,13 +387,14 @@ export function selectionForAiHarness(input: {
     return { credentialKeys: [], serviceNames: [] };
   }
 
+  const proxyDefaults = proxyDefaultsForAiHarness(harness.id);
   const availableCredentialKeys = new Set(input.availableCredentialKeys);
   const credentialKeys = unique([
-    ...harness.credentialKeys,
-    ...harness.optionalCredentialKeys,
+    ...proxyDefaults.credentialKeys,
+    ...proxyDefaults.optionalCredentialKeys,
   ]).filter((key) => availableCredentialKeys.has(key));
   const serviceNames = input.services
-    .filter((service) => serviceHostMatches(service.host, harness.serviceHosts))
+    .filter((service) => serviceHostMatches(service.host, proxyDefaults.serviceHosts))
     .map(serviceDisplayName)
     .sort();
 
@@ -457,6 +482,11 @@ export function createEffectApiSnippet(config: SandboxProxyConfig): string {
     null,
     2,
   );
+  const serviceHosts = JSON.stringify(
+    config.selectedServices.map((service) => service.host),
+    null,
+    2,
+  );
   const sandbox = JSON.stringify(
     {
       id: config.sandboxRuntime.id,
@@ -479,9 +509,6 @@ export function createEffectApiSnippet(config: SandboxProxyConfig): string {
       prompt: config.aiHarness.prompt,
       env: config.aiHarness.env,
       requestUrl: config.aiHarness.requestUrl,
-      credentialKeys: config.selectedCredentialKeys,
-      serviceNames: config.selectedServices.map((service) => service.name),
-      serviceHosts: config.aiHarness.serviceHosts,
     },
     null,
     2,
@@ -494,11 +521,8 @@ export function createEffectApiSnippet(config: SandboxProxyConfig): string {
 } from "@infisical/agent-vault-sdk/effect";
 import { Effect, Layer } from "effect";
 
-const SandboxTarget = ${sandbox} as const;
-const AiHarness = ${aiHarness} as const;
-
-const SandboxLayer = AgentVaultSandboxTarget.layer(SandboxTarget);
-const HarnessLayer = AgentVaultAiHarness.layer(AiHarness);
+const SandboxLayer = AgentVaultSandboxTarget.layer(${sandbox});
+const HarnessLayer = AgentVaultAiHarness.layer(${aiHarness});
 const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
   address: process.env.AGENT_VAULT_ADDR!,
   token: process.env.AGENT_VAULT_TOKEN!,
@@ -506,7 +530,8 @@ const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
   ttlSeconds: 900,
   label: "effect-playground-generated-layer",
   credentialKeys: ${credentialKeys},
-  serviceNames: ${serviceNames}
+  serviceNames: ${serviceNames},
+  serviceHosts: ${serviceHosts}
 });
 const AppLayer = ProxyLayer.pipe(
   Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer))

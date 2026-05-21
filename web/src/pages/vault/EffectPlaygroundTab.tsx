@@ -14,6 +14,7 @@ import {
   defaultAiHarnessForVault,
   makeSandboxProxyConfig,
   proxyEnvKeys,
+  proxyDefaultsForAiHarness,
   redactedDisplay,
   sandboxRuntimeById,
   sandboxRuntimeOptions,
@@ -174,13 +175,17 @@ export default function EffectPlaygroundTab() {
   const preview = proxyConfig ? sanitizeProxyConfig(proxyConfig) : null;
   const currentSandboxRuntime = sandboxRuntimeById(sandboxRuntimeId);
   const currentAiHarness = aiHarnessById(aiHarnessId);
+  const currentProxyDefaults = useMemo(
+    () => proxyDefaultsForAiHarness(aiHarnessId),
+    [aiHarnessId],
+  );
   const currentHarnessCredentialKeys = useMemo(
     () =>
       [
-        ...currentAiHarness.credentialKeys,
-        ...currentAiHarness.optionalCredentialKeys,
+        ...currentProxyDefaults.credentialKeys,
+        ...currentProxyDefaults.optionalCredentialKeys,
       ].filter((key, index, keys) => keys.indexOf(key) === index),
-    [currentAiHarness],
+    [currentProxyDefaults],
   );
   const currentAiSelection = useMemo(
     () =>
@@ -191,7 +196,7 @@ export default function EffectPlaygroundTab() {
       }),
     [aiHarnessId, credentialKeys, services],
   );
-  const missingAiCredentialKeys = currentAiHarness.credentialKeys.filter(
+  const missingAiCredentialKeys = currentProxyDefaults.credentialKeys.filter(
     (key) => !credentialKeys.includes(key),
   );
 
@@ -380,7 +385,8 @@ export default function EffectPlaygroundTab() {
                       ) : (
                         currentHarnessCredentialKeys.map((key) => {
                           const available = credentialKeys.includes(key);
-                          const required = currentAiHarness.credentialKeys.includes(key);
+                          const required =
+                            currentProxyDefaults.credentialKeys.includes(key);
                           return (
                             <span
                               key={key}
@@ -715,6 +721,11 @@ function runGeneratedLayerPreview(
             caEnvKeys.includes(key) ? config.certPath : "<redacted>",
           ]),
         ),
+        proxyPolicy: {
+          credentialKeys: config.selectedCredentialKeys,
+          serviceNames: config.selectedServices.map((service) => service.name),
+          serviceHosts: config.selectedServices.map((service) => service.host),
+        },
         installPhase: {
           command: config.aiHarness.installScript,
           proxyEnvKeys: proxyEnvKeys,
@@ -805,6 +816,11 @@ interface GeneratedLayerRunOutput {
     readonly caCertificateBytes: number;
   };
   readonly proxyEnv: Record<string, string>;
+  readonly proxyPolicy: {
+    readonly credentialKeys: ReadonlyArray<string>;
+    readonly serviceNames: ReadonlyArray<string>;
+    readonly serviceHosts: ReadonlyArray<string>;
+  };
   readonly installPhase: {
     readonly command: string;
     readonly proxyEnvKeys: ReadonlyArray<string>;
@@ -870,6 +886,11 @@ function sanitizeProxyConfig(config: SandboxProxyConfig) {
       requestUrl: config.aiHarness.requestUrl,
     },
     certPath: config.certPath,
+    proxyPolicy: {
+      credentialKeys: config.selectedCredentialKeys,
+      serviceNames: config.selectedServices.map((service) => service.name),
+      serviceHosts: config.selectedServices.map((service) => service.host),
+    },
     selectedCredentialKeys: config.selectedCredentialKeys,
     selectedServices: config.selectedServices,
     proxyEnv: Object.fromEntries(

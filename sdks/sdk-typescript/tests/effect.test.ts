@@ -52,11 +52,10 @@ describe("AgentVaultSandboxProxy", () => {
           installScript: "npm install -g @openai/codex@latest",
           runScript: "codex exec \"$AGENT_PROMPT\"",
           requestUrl: "https://api.openai.com/v1/responses",
-          credentialKeys: ["OPENAI_API_KEY"],
-          serviceNames: ["openai"],
         },
         credentialKeys: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
         serviceNames: ["openai"],
+        serviceHosts: ["api.openai.com"],
       }),
     );
 
@@ -73,6 +72,7 @@ describe("AgentVaultSandboxProxy", () => {
     expect(unsafeMaterializeCaCertificate(prepared)).toContain("FAKE");
     expect(prepared.sandbox?.id).toBe("sprite");
     expect(prepared.aiHarness?.id).toBe("codex");
+    expect(prepared.serviceHosts).toEqual(["api.openai.com"]);
     expect(Object.keys(prepared.sentinelEnv)).toEqual([
       "ANTHROPIC_API_KEY",
       "OPENAI_API_KEY",
@@ -168,12 +168,13 @@ describe("AgentVaultSandboxProxy", () => {
       installScript: "npm install -g @anthropic-ai/claude-code@latest",
       runScript: "claude -p \"$AGENT_PROMPT\"",
       requestUrl: "https://api.anthropic.com/v1/messages",
-      credentialKeys: ["ANTHROPIC_API_KEY"],
-      serviceNames: ["anthropic"],
     });
     const ProxyLayer = AgentVaultSandboxProxy.layerFromTargets({
       client,
       vault: "default",
+      credentialKeys: ["ANTHROPIC_API_KEY"],
+      serviceNames: ["anthropic"],
+      serviceHosts: ["api.anthropic.com"],
     });
     const AppLayer = ProxyLayer.pipe(
       Layer.provideMerge(Layer.mergeAll(SandboxLayer, HarnessLayer)),
@@ -193,5 +194,6 @@ describe("AgentVaultSandboxProxy", () => {
     expect(result.prepared.certPath).toBe("/home/sandbox/.agent-vault/ca.pem");
     expect(result.prepared.credentialKeys).toEqual(["ANTHROPIC_API_KEY"]);
     expect(result.prepared.serviceNames).toEqual(["anthropic"]);
+    expect(result.prepared.serviceHosts).toEqual(["api.anthropic.com"]);
   });
 });

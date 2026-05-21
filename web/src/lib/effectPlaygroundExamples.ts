@@ -93,7 +93,7 @@ const program = Effect.gen(function* () {
       proxyEnvKeys: Object.keys(proxy.proxyEnv),
       sentinelEnvKeys: Object.keys(proxy.sentinelEnv)
     },
-    interceptedHosts: harness.serviceHosts
+    interceptedHosts: proxy.selectedServices.map((service) => service.host)
   };
 }).pipe(Effect.provide(AppLayer));`,
   },
@@ -204,7 +204,7 @@ export function runPlaygroundExample(
             proxyEnvKeys: Object.keys(proxy.proxyEnv),
             sentinelEnvKeys: Object.keys(proxy.sentinelEnv),
           },
-          interceptedHosts: harness.serviceHosts,
+          interceptedHosts: proxy.selectedServices.map((service) => service.host),
           result: "The sandbox runs the harness normally; HTTP(S)_PROXY and CA env route outbound API calls through Agent Vault.",
         };
       }).pipe(Effect.provide(layer));

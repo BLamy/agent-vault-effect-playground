@@ -37,9 +37,6 @@ export interface AgentVaultAiHarnessConfig {
   readonly prompt?: string;
   readonly env?: Record<string, string>;
   readonly requestUrl?: string;
-  readonly credentialKeys?: ReadonlyArray<string>;
-  readonly serviceNames?: ReadonlyArray<string>;
-  readonly serviceHosts?: ReadonlyArray<string>;
 }
 
 export interface AgentVaultSandboxProxyOptions extends AgentVaultConfig {
@@ -51,6 +48,7 @@ export interface AgentVaultSandboxProxyOptions extends AgentVaultConfig {
   readonly label?: string;
   readonly credentialKeys?: ReadonlyArray<string>;
   readonly serviceNames?: ReadonlyArray<string>;
+  readonly serviceHosts?: ReadonlyArray<string>;
   readonly client?: AgentVaultSessionClient;
 }
 
@@ -61,6 +59,7 @@ export interface AgentVaultSandboxProxyLayerOptions extends AgentVaultConfig {
   readonly label?: string;
   readonly credentialKeys?: ReadonlyArray<string>;
   readonly serviceNames?: ReadonlyArray<string>;
+  readonly serviceHosts?: ReadonlyArray<string>;
   readonly client?: AgentVaultSessionClient;
 }
 
@@ -72,6 +71,7 @@ export interface PreparedSandboxProxy {
   readonly aiHarness?: AgentVaultAiHarnessConfig;
   readonly credentialKeys: ReadonlyArray<string>;
   readonly serviceNames: ReadonlyArray<string>;
+  readonly serviceHosts: ReadonlyArray<string>;
   readonly env: Record<string, Redacted.Redacted<string>>;
   readonly sentinelEnv: Record<string, string>;
   readonly caCertificate: Redacted.Redacted<string>;
@@ -121,8 +121,9 @@ export class AgentVaultSandboxProxy extends Context.Tag(
             certPath: options.certPath ?? sandbox.certPath ?? "",
             sandbox,
             aiHarness,
-            credentialKeys: options.credentialKeys ?? aiHarness.credentialKeys,
-            serviceNames: options.serviceNames ?? aiHarness.serviceNames,
+            credentialKeys: options.credentialKeys,
+            serviceNames: options.serviceNames,
+            serviceHosts: options.serviceHosts,
           }),
         };
       }),
@@ -189,6 +190,7 @@ export function prepareForSandbox(
         aiHarness: options.aiHarness,
         credentialKeys,
         serviceNames: unique(options.serviceNames ?? []),
+        serviceHosts: unique(options.serviceHosts ?? []),
         env: redactRecord(env),
         sentinelEnv: Object.fromEntries(
           credentialKeys.map((key) => [key, `__AGENT_VAULT__:${key}`]),
